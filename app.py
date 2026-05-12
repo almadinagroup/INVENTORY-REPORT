@@ -7,7 +7,7 @@ streamlit run app.py
 """
 
 import streamlit as st
-import json, gc, re
+import json, gc, re, zipfile
 from io import BytesIO
 from collections import defaultdict
 from datetime import datetime
@@ -48,15 +48,33 @@ def month_sort_key(m):
 def read_excel_df(file_bytes):
     """
     Read Excel bytes → pandas DataFrame with normalised columns.
+    Uses python-calamine engine (fast, no openpyxl needed, works on Python 3.14).
+    Falls back to stdlib zipfile+xml parser if calamine unavailable.
     Memory-efficient: only loads needed columns with optimal dtypes.
     """
     import pandas as pd
 
     bio = BytesIO(file_bytes)
 
-    # Read header only first
-    df_h = pd.read_excel(bio, header=0, nrows=0, engine='openpyxl')
-    raw_cols = list(df_h.columns)
+    # ── Detect engine ──────────────────────────────────────────────────────
+    engine = None
+    for eng in ('calamine', 'openpyxl', 'xlrd'):
+        try:
+            pd.read_excel(bio, header=0, nrows=0, engine=eng)
+            engine = eng
+            bio.seek(0)
+            break
+        except Exception:
+            bio.seek(0)
+
+    if engine is None:
+        # Pure stdlib fallback
+        return _read_excel_stdlib(file_bytes)
+
+    # ── Read header to detect columns ──────────────────────────────────────
+    df_h = pd.read_excel(bio, header=0, nrows=0, engine=engine)
+    bio.seek(0)
+    raw_cols  = list(df_h.columns)
     norm_cols = [normalise_col(c) for c in raw_cols]
     month_cols = detect_months(norm_cols)
 
@@ -66,24 +84,18 @@ def read_excel_df(file_bytes):
         'LP Date','LP Qty','LP Supplier','Total Sales',
     } | set(month_cols)
 
-    # Map normalised → original for usecols filter
     orig_to_norm = dict(zip(raw_cols, norm_cols))
-    keep_orig = [c for c in raw_cols if orig_to_norm[c] in NEEDED]
+    keep_orig    = [c for c in raw_cols if orig_to_norm[c] in NEEDED]
 
-    bio.seek(0)
-    df = pd.read_excel(bio, header=0, usecols=keep_orig, engine='openpyxl')
+    df = pd.read_excel(bio, header=0, usecols=keep_orig, engine=engine)
     df.rename(columns=orig_to_norm, inplace=True)
-
-    # Deduplicate columns
     df = df.loc[:, ~df.columns.duplicated()]
 
-    # Numeric columns
     num_cols = ['Cost','Selling','Stock','Stock Value','Margin%','LP Qty','Total Sales'] + month_cols
     for col in num_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('float32')
 
-    # Low-cardinality strings → category
     for col in ['Category','Class','Group','Brand']:
         if col in df.columns:
             df[col] = df[col].fillna('').astype('category')
@@ -92,10 +104,94 @@ def read_excel_df(file_bytes):
         if col in df.columns:
             df[col] = df[col].fillna('').astype(str)
 
-    # Remove fully blank rows
     df.dropna(how='all', inplace=True)
     df.reset_index(drop=True, inplace=True)
 
+    return df, month_cols
+
+
+def _read_excel_stdlib(file_bytes):
+    """
+    Pure Python stdlib xlsx reader (zipfile + xml).
+    No third-party dependencies. Slower but always works.
+    """
+    import xml.etree.ElementTree as ET
+    import pandas as pd
+
+    NS  = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    TR  = "{%s}row" % NS; TC = "{%s}c" % NS; TV = "{%s}v" % NS
+    TT  = "{%s}t"   % NS; TSI = "{%s}si" % NS; TIS = "{%s}is" % NS
+
+    with zipfile.ZipFile(BytesIO(file_bytes)) as z:
+        names = set(i.filename for i in z.infolist())
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(TSI):
+                shared.append("".join(t.text or "" for t in si.iter(TT)))
+        sheet = next((n for n in sorted(names)
+                      if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")), None)
+        sb = z.read(sheet)
+
+    def ci(ref):
+        i = 0
+        for ch in ref:
+            if not ch.isalpha(): break
+            i = i*26 + ord(ch.upper()) - 64
+        return i - 1
+
+    rows, cur = [], {}
+    for ev, el in ET.iterparse(BytesIO(sb), events=("start","end")):
+        if ev == "start" and el.tag == TR:
+            cur = {}
+        elif ev == "end" and el.tag == TC:
+            ref = el.get("r","A1"); c = ci(ref); t = el.get("t","n")
+            v = el.find(TV); is_ = el.find(TIS)
+            if is_ is not None:
+                te = is_.find(TT); val = te.text if te is not None else ""
+            elif v is not None:
+                rv = v.text or ""
+                if t == "s":   val = shared[int(rv)] if shared else rv
+                elif t == "b": val = bool(int(rv))
+                else:
+                    try: val = float(rv) if "." in rv else int(rv)
+                    except: val = rv
+            else: val = None
+            cur[c] = val
+            el.clear()
+        elif ev == "end" and el.tag == TR:
+            if cur: rows.append([cur.get(i) for i in range(max(cur)+1)])
+            el.clear()
+
+    if not rows:
+        raise RuntimeError("Excel file appears to be empty.")
+
+    raw_headers = [str(v) if v is not None else "" for v in rows[0]]
+    norm_headers = [normalise_col(h) for h in raw_headers]
+    month_cols = detect_months(norm_headers)
+
+    data = []
+    for row in rows[1:]:
+        while len(row) < len(norm_headers): row.append(None)
+        if all(v is None or str(v).strip() == "" for v in row): continue
+        data.append({norm_headers[j]: row[j] for j in range(len(norm_headers)) if norm_headers[j]})
+
+    df = pd.DataFrame(data)
+
+    num_cols = ['Cost','Selling','Stock','Stock Value','Margin%','LP Qty','Total Sales'] + month_cols
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('float32')
+
+    for col in ['Category','Class','Group','Brand']:
+        if col in df.columns:
+            df[col] = df[col].fillna('').astype('category')
+
+    for col in ['Item Name','Supplier','LP Supplier']:
+        if col in df.columns:
+            df[col] = df[col].fillna('').astype(str)
+
+    df.dropna(how='all', inplace=True)
+    df.reset_index(drop=True, inplace=True)
     return df, month_cols
 
 
