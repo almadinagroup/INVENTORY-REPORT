@@ -16,15 +16,20 @@ All processing is local — nothing is stored or transmitted.
 # SECTION 1 — DASHBOARD GENERATOR ENGINE
 # ═════════════════════════════════════════════════════════════════════════════
 
-"""
-AL MADINA GROUP — Inventory Dashboard Generator
-Converts any uploaded Excel inventory file → standalone HTML dashboard
-Handles missing columns gracefully throughout.
-"""
-
+# ─── Core imports (top-level so Streamlit Cloud installs all deps) ───────────
 import json
+import os
+import tempfile
 from collections import defaultdict
 from datetime import datetime
+
+try:
+    from openpyxl import load_workbook as _openpyxl_load
+except ImportError:
+    raise ImportError(
+        "openpyxl is not installed. Ensure requirements.txt contains "
+        "'openpyxl>=3.1.0' and reboot the app on Streamlit Cloud."
+    )
 
 # ─── SAFE HELPERS ────────────────────────────────────────────────────────────
 
@@ -133,8 +138,7 @@ def read_excel(filepath):
     Handles missing columns, extra columns, blank rows.
     """
     try:
-        from openpyxl import load_workbook
-        wb = load_workbook(filepath, read_only=True, data_only=True)
+        wb = _openpyxl_load(filepath, read_only=True, data_only=True)
         ws = wb.active
 
         raw_headers = []
@@ -1153,8 +1157,6 @@ initFilter('uw',   UW_CC,   UW_ROWS,   null,      UW_CNT,   UW_SV,    null,    '
 
 
 import streamlit as st
-import os
-import tempfile
 from pathlib import Path
 
 # ── Page config ───────────────────────────────────────────────────────────────
