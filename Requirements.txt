@@ -1,2 +1,7 @@
 streamlit
+pandas
+xlsxwriter
+xlrd
+numpy
+python-calamine
 openpyxl
