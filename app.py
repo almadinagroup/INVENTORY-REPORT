@@ -26,10 +26,9 @@ from datetime import datetime
 try:
     from openpyxl import load_workbook as _openpyxl_load
 except ImportError:
-    raise ImportError(
-        "openpyxl is not installed. Ensure requirements.txt contains "
-        "'openpyxl>=3.1.0' and reboot the app on Streamlit Cloud."
-    )
+    import subprocess, sys
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl>=3.1.0"])
+    from openpyxl import load_workbook as _openpyxl_load
 
 # ─── SAFE HELPERS ────────────────────────────────────────────────────────────
 
