@@ -50,12 +50,43 @@ hr { border-color: #30363D !important; }
 [data-testid="stMetricValue"] { color: #E6EDF3 !important; font-size: 20px !important; font-weight: 700 !important; }
 [data-testid="stMetricDelta"] svg { display: none; }
 
-/* ── File uploader ── */
+/* ── File uploader — restyle fully, no red border ── */
 [data-testid="stFileUploader"] {
-    background: #161B22; border: 2px dashed #30363D; border-radius: 12px; padding: 8px;
+    background: #161B22 !important;
+    border: 2px dashed #30363D !important;
+    border-radius: 12px !important;
+    padding: 4px !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
-[data-testid="stFileUploader"]:hover { border-color: #388BFD; }
+[data-testid="stFileUploader"]:hover,
+[data-testid="stFileUploader"]:focus,
+[data-testid="stFileUploader"]:focus-within {
+    border-color: #388BFD !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+[data-testid="stFileUploaderDropzone"] {
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+}
+[data-testid="stFileUploaderDropzone"]:focus,
+[data-testid="stFileUploaderDropzone"]:focus-within {
+    outline: none !important; box-shadow: none !important;
+}
 [data-testid="stFileDropzoneInstructions"] { color: #8B949E !important; }
+[data-testid="stFileUploaderDropzoneInput"] { outline: none !important; }
+/* Kill red ring on ANY focused Streamlit widget container */
+[data-testid]:focus, [data-testid]:focus-within,
+[data-baseweb]:focus, [data-baseweb]:focus-within,
+section:focus, section:focus-within,
+div[class*="stFileUploader"]:focus,
+div[class*="stFileUploader"]:focus-within {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: #30363D !important;
+}
 
 /* ── Buttons ── */
 .stButton > button[kind="primary"] {
@@ -78,11 +109,30 @@ hr { border-color: #30363D !important; }
 }
 .stDownloadButton > button:hover { background: #2EA043 !important; }
 
-/* ── Expander ── */
-[data-testid="stExpander"] {
-    background: #161B22 !important; border: 1px solid #30363D !important; border-radius: 8px !important;
+/* ── Expander — kill ALL borders including the red focus ring ── */
+[data-testid="stExpander"],
+[data-testid="stExpander"] > details,
+[data-testid="stExpander"] > details > summary,
+[data-testid="stExpanderDetails"],
+details, details > summary {
+    background: #161B22 !important;
+    border: 1px solid #30363D !important;
+    border-radius: 8px !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
-[data-testid="stExpander"] summary { color: #8B949E !important; }
+details > summary { color: #8B949E !important; list-style: none; padding: 10px 14px; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary:focus, details > summary:focus-visible,
+details:focus, details:focus-within,
+[data-testid="stExpander"]:focus, [data-testid="stExpander"]:focus-within {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: #30363D !important;
+}
+/* Streamlit wraps expanders in various containers — nuke any red outline globally */
+*:focus { outline: none !important; }
+*:focus-visible { outline: 1px solid #388BFD !important; box-shadow: none !important; }
 
 /* ── Progress bar ── */
 [data-testid="stProgress"] > div > div { background: #2563EB !important; }
@@ -952,12 +1002,13 @@ initSection('uw',UW_DATA,rowUW,
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
-<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
-  <div style="background:linear-gradient(135deg,#1B2B4B,#3B82F6);width:52px;height:52px;border-radius:10px;
-       display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:white;flex-shrink:0">AM</div>
-  <div>
-    <div style="font-size:22px;font-weight:700;color:#E6EDF3;letter-spacing:-.3px">AL MADINA GROUP</div>
-    <div style="font-size:13px;color:#8B949E">Inventory Intelligence Dashboard Generator</div>
+<div style="display:flex;align-items:center;gap:16px;padding:8px 0 4px;margin-bottom:4px">
+  <div style="background:linear-gradient(135deg,#1B2B4B,#3B82F6);width:48px;height:48px;border-radius:10px;
+       display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;
+       color:white;flex-shrink:0;letter-spacing:-.5px">AM</div>
+  <div style="min-width:0">
+    <div style="font-size:20px;font-weight:700;color:#E6EDF3;letter-spacing:-.3px;white-space:nowrap">AL MADINA GROUP</div>
+    <div style="font-size:12px;color:#8B949E;margin-top:1px">Inventory Intelligence Dashboard Generator</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -997,15 +1048,11 @@ with st.expander("ℹ️  How to use", expanded=False):
 # ── Upload ────────────────────────────────────────────────────────────────────
 st.markdown("### 📂 Upload Inventory Excel File")
 
-st.markdown("""
-<div style="background:#161B22;border:2px dashed #30363D;border-radius:12px;padding:6px;margin-bottom:4px">
-""", unsafe_allow_html=True)
 uploaded_file = st.file_uploader(
-    "Drop your Excel file here",
+    "Drop your Excel file here (.xlsx / .xls)",
     type=["xlsx","xls"],
-    label_visibility="collapsed"
+    label_visibility="visible"
 )
-st.markdown("</div>", unsafe_allow_html=True)
 
 if uploaded_file:
     sz = len(uploaded_file.getvalue()) / 1024 / 1024
