@@ -23,9 +23,6 @@ import tempfile
 from collections import defaultdict
 from datetime import datetime
 
-# openpyxl is imported inside read_excel() to give a clean error if missing
-_openpyxl_load = None
-
 # ─── SAFE HELPERS ────────────────────────────────────────────────────────────
 
 def sf(v):
@@ -127,37 +124,142 @@ def detect_month_columns(headers):
 
 # ─── EXCEL READER ─────────────────────────────────────────────────────────────
 
-def read_excel(filepath):
+def _parse_xlsx_stdlib(file_bytes):
     """
-    Read Excel file → list of dicts with normalised column names.
-    Handles missing columns, extra columns, blank rows.
+    Parse .xlsx using only Python stdlib (zipfile + xml).
+    No openpyxl, no pandas required. Works on any Python version.
+    """
+    import zipfile, xml.etree.ElementTree as ET
+    from io import BytesIO
+
+    NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+    with zipfile.ZipFile(BytesIO(file_bytes)) as z:
+        names = [i.filename for i in z.infolist()]
+
+        # Read shared strings
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            ss_xml = z.read("xl/sharedStrings.xml")
+            for si in ET.fromstring(ss_xml).iter("{" + NS + "}si"):
+                shared.append("".join(t.text or "" for t in si.iter("{" + NS + "}t")))
+
+        # Find first sheet
+        sheet_file = "xl/worksheets/sheet1.xml"
+        if sheet_file not in names:
+            # Try workbook to find first sheet name
+            for n in names:
+                if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"):
+                    sheet_file = n
+                    break
+
+        sheet_xml = z.read(sheet_file)
+
+    def col_index(ref):
+        col = "".join(c for c in ref if c.isalpha())
+        idx = 0
+        for ch in col:
+            idx = idx * 26 + (ord(ch.upper()) - 64)
+        return idx - 1
+
+    rows_out = []
+    max_col = 0
+
+    for row_el in ET.fromstring(sheet_xml).iter("{" + NS + "}row"):
+        cells = {}
+        for cell in row_el.iter("{" + NS + "}c"):
+            ref  = cell.get("r", "A1")
+            col_i = col_index(ref)
+            t    = cell.get("t", "n")
+            v_el = cell.find("{" + NS + "}v")
+            is_el = cell.find("{" + NS + "}is")
+
+            if is_el is not None:
+                t_el = is_el.find("{" + NS + "}t")
+                val  = t_el.text if t_el is not None else ""
+            elif v_el is not None:
+                rv = v_el.text or ""
+                if t == "s":
+                    val = shared[int(rv)] if shared else rv
+                elif t in ("b",):
+                    val = bool(int(rv))
+                else:
+                    try:
+                        val = float(rv) if "." in rv else int(rv)
+                    except (ValueError, TypeError):
+                        val = rv
+            else:
+                val = None
+
+            cells[col_i] = val
+            max_col = max(max_col, col_i)
+
+        if cells:
+            rows_out.append([cells.get(i) for i in range(max_col + 1)])
+
+    return rows_out
+
+
+def read_excel(filepath_or_bytes):
+    """
+    Read Excel file → (data, month_cols, headers).
+    Accepts a filepath (str) or raw bytes.
+    Primary: pandas with openpyxl engine.
+    Fallback: pure Python stdlib (zipfile + xml).
     """
     try:
+        from io import BytesIO
+
+        # Accept filepath or raw bytes
+        if isinstance(filepath_or_bytes, (bytes, bytearray)):
+            file_bytes = bytes(filepath_or_bytes)
+        else:
+            with open(filepath_or_bytes, "rb") as _f:
+                file_bytes = _f.read()
+
+        # ── Try pandas first (fast, handles all edge cases) ──────────────
         try:
-            from openpyxl import load_workbook as _load
-        except ImportError:
-            raise RuntimeError(
-                "openpyxl is not installed on this server.\n\n"
-                "Fix: add 'openpyxl>=3.1.0' to requirements.txt in your GitHub repo "
-                "and click Manage app → Reboot app on Streamlit Cloud."
-            )
-        wb = _load(filepath, read_only=True, data_only=True)
-        ws = wb.active
+            import pandas as _pd
+            df = _pd.read_excel(BytesIO(file_bytes), header=0, dtype=str, engine='openpyxl')
+            df = df.where(_pd.notna(df), None)
+            raw_headers = list(df.columns)
+            headers = normalise_headers(raw_headers)
+            df.columns = headers
+            data = []
+            for _, row in df.iterrows():
+                d = {}
+                for col in headers:
+                    if not col: continue
+                    val = row.get(col)
+                    if val is None or (isinstance(val, str) and val.strip() == ''):
+                        d[col] = None
+                    else:
+                        try: d[col] = float(str(val).replace(',', ''))
+                        except (ValueError, TypeError): d[col] = str(val).strip()
+                data.append(d)
+            data = [r for r in data if any(v is not None for v in r.values())]
+            month_cols = detect_month_columns(headers)
+            return data, month_cols, headers
+        except Exception:
+            pass  # fall through to stdlib
 
-        raw_headers = []
-        rows = []
-        for i, row in enumerate(ws.iter_rows(values_only=True)):
-            if i == 0:
-                raw_headers = list(row)
-            else:
-                # Skip fully blank rows
-                if all(v is None for v in row):
-                    continue
-                rows.append(row)
+        # ── Fallback: pure stdlib parser ──────────────────────────────────
+        rows = _parse_xlsx_stdlib(file_bytes)
 
+        if not rows:
+            raise RuntimeError("Excel file appears to be empty.")
+
+        raw_headers = [str(v) if v is not None else "" for v in rows[0]]
         headers = normalise_headers(raw_headers)
+
         data = []
-        for row in rows:
+        for row in rows[1:]:
+            # Pad short rows
+            while len(row) < len(headers):
+                row.append(None)
+            # Skip fully blank rows
+            if all(v is None or str(v).strip() == "" for v in row):
+                continue
             d = {}
             for j, val in enumerate(row):
                 if j < len(headers) and headers[j]:
@@ -1263,11 +1365,10 @@ if uploaded_file is not None:
         status   = st.empty()
 
         try:
-            # ── Save upload to temp file ───────────────────────────────────
-            progress.progress(5, text="Saving uploaded file…")
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-                tmp.write(uploaded_file.getvalue())
-                tmp_path = tmp.name
+            # ── Read uploaded bytes directly (no tempfile needed) ─────────
+            progress.progress(5, text="Reading uploaded file…")
+            file_bytes = uploaded_file.getvalue()
+            tmp_path = file_bytes  # pass bytes directly to read_excel
 
 
             progress.progress(10, text="Loading generator…")
@@ -1305,12 +1406,8 @@ if uploaded_file is not None:
                 source_filename=uploaded_file.name,
             )
 
-            # ── Cleanup ───────────────────────────────────────────────────
+            # ── Finalising ────────────────────────────────────────────────
             progress.progress(95, text="Finalising…")
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
 
             progress.progress(100, text="Dashboard ready!")
             st.success("✅  Dashboard generated successfully!")
