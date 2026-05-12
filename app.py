@@ -23,12 +23,8 @@ import tempfile
 from collections import defaultdict
 from datetime import datetime
 
-try:
-    from openpyxl import load_workbook as _openpyxl_load
-except ImportError:
-    import subprocess, sys
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl>=3.1.0"])
-    from openpyxl import load_workbook as _openpyxl_load
+# openpyxl is imported inside read_excel() to give a clean error if missing
+_openpyxl_load = None
 
 # ─── SAFE HELPERS ────────────────────────────────────────────────────────────
 
@@ -137,7 +133,15 @@ def read_excel(filepath):
     Handles missing columns, extra columns, blank rows.
     """
     try:
-        wb = _openpyxl_load(filepath, read_only=True, data_only=True)
+        try:
+            from openpyxl import load_workbook as _load
+        except ImportError:
+            raise RuntimeError(
+                "openpyxl is not installed on this server.\n\n"
+                "Fix: add 'openpyxl>=3.1.0' to requirements.txt in your GitHub repo "
+                "and click Manage app → Reboot app on Streamlit Cloud."
+            )
+        wb = _load(filepath, read_only=True, data_only=True)
         ws = wb.active
 
         raw_headers = []
