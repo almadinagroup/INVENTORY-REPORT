@@ -988,16 +988,24 @@ if uploaded_file:
     with st.spinner("Checking columns…"):
         try:
             import pandas as pd
-            bio    = BytesIO(uploaded_file.getvalue())
+            file_bytes_val = uploaded_file.getvalue()
             engine = None
             for eng in ('calamine', 'openpyxl', 'xlrd'):
                 try:
-                    pd.read_excel(bio, header=0, nrows=0, engine=eng)
-                    engine = eng; bio.seek(0); break
+                    bio = BytesIO(file_bytes_val)
+                    test = pd.read_excel(bio, header=0, nrows=1, engine=eng)
+                    if len(test.columns) > 0:
+                        engine = eng; break
                 except Exception:
-                    bio.seek(0)
-            df_h      = pd.read_excel(bio, header=0, nrows=0, engine=engine) if engine else pd.DataFrame()
-            raw_cols  = list(df_h.columns)
+                    pass
+
+            if engine:
+                df_h = pd.read_excel(BytesIO(file_bytes_val), header=0, nrows=1, engine=engine)
+                raw_cols = list(df_h.columns)
+            else:
+                df_h, _ = _read_excel_stdlib(file_bytes_val)
+                raw_cols = list(df_h.columns)
+
             norm_cols = [normalise_col(c) for c in raw_cols]
             missing_req, missing_opt = check_missing_columns(norm_cols)
             month_preview = detect_months(norm_cols)
