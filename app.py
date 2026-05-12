@@ -31,8 +31,27 @@ html, body, [data-testid="stAppViewContainer"],
 [data-testid="stMain"], [data-testid="stMainBlockContainer"],
 .main, .block-container { background: #0D1117 !important; color: #E6EDF3 !important; }
 
-[data-testid="stHeader"] { background: #161B22 !important; border-bottom: 1px solid #30363D; }
 [data-testid="stSidebar"] { background: #161B22 !important; }
+
+/* ── Hide ALL Streamlit chrome ── */
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+#MainMenu,
+header,
+footer,
+.stDeployButton,
+[data-testid="stDeployButton"],
+[data-testid="baseButton-headerNoPadding"],
+iframe[title="streamlit_analytics"],
+div[data-testid="collapsedControl"] {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
 
 /* ── Block container ── */
 .block-container { padding-top: 1.5rem; max-width: 960px; }
