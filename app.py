@@ -367,6 +367,34 @@ def lp_label(lpd_val, lpq_val=0):
     return s[:20]
 
 
+# Report reference date — use today dynamically
+def age_days(lpd_val):
+    """Return days since last purchase. None if blank/unparseable."""
+    if lpd_val is None: return None
+    s = str(lpd_val).strip()
+    if s in ('','nan','NaT','None','0','NaTType') or 'NaT' in s: return None
+    today = datetime.now()
+    for fmt in ('%d-%b-%Y','%Y-%m-%d','%d/%m/%Y','%m/%d/%Y','%d-%m-%Y','%b %d, %Y','%d %b %Y'):
+        try: return (today - datetime.strptime(s, fmt)).days
+        except: pass
+    return None
+
+
+def age_bucket(days):
+    """Return ageing band label from days integer."""
+    if days is None: return 'Pre-2025'
+    if days <= 30:  return '0–30 days'
+    if days <= 90:  return '31–90 days'
+    if days <= 180: return '91–180 days'
+    if days <= 360: return '181–360 days'
+    return '360+ days'
+
+
+def age_bucket_order(label):
+    order = {'0–30 days':0,'31–90 days':1,'91–180 days':2,'181–360 days':3,'360+ days':4,'Pre-2025':5}
+    return order.get(label, 9)
+
+
 def df_to_compact_json(df, fields, last3=None):
     rows = []
     for _, r in df.iterrows():
@@ -379,13 +407,20 @@ def df_to_compact_json(df, fields, last3=None):
             if typ == 'num':
                 row[key] = round(float(val) if val is not None and str(val) not in ('','nan') else 0, 2)
             elif typ == 'lpd':
-                row[key] = lp_label(val, 0)
+                lpd_str = lp_label(val, 0)
+                row[key] = lpd_str
+                # also compute ageing
+                d = age_days(val)
+                row['age']  = d if d is not None else -1   # -1 = pre-2025/unknown
+                row['ageb'] = age_bucket(d)                # human label
             else:
                 row[key] = str(val)[:50] if val is not None else ''
         if last3:
             row['m0'] = round(float(r.get(last3[2], 0) or 0), 1) if len(last3) > 2 else 0
             row['m1'] = round(float(r.get(last3[1], 0) or 0), 1) if len(last3) > 1 else 0
             row['m2'] = round(float(r.get(last3[0], 0) or 0), 1) if last3 else 0
+        # ensure ageb exists even if no lpd field was in fields
+        if 'ageb' not in row: row['ageb'] = ''
         rows.append(row)
     return json.dumps(rows, separators=(',',':'))
 
@@ -524,7 +559,7 @@ def generate_html(file_bytes, source_filename=''):
         ('OOS Active Demand',     fmtN(K['oos_count'],0),    'Selling but unavailable',                 'red',  'kv-red'),
         ('High Risk Slow Movers', fmtN(K['risk_count'],0),   fmtA(K['risk_sv'],0)+' exposure',          'amber','kv-amber'),
         ('Unwanted Repurchases',  fmtN(K['uw_count'],0),     fmtA(K['uw_sv'],0)+' re-bought, unsold',   'amber','kv-amber'),
-        ('Pre-2025 Stock',        fmtN(K['pre_count'],0),    fmtA(K['pre_sv'],0)+f" — {fmtN(K['pre_zero_count'],0)} zero sale / {fmtN(K['pre_sales_count'],0)} selling",'amber','kv-amber'),
+        ('Pre-2025 Stock',        fmtN(K['pre_count'],0),    fmtA(K['pre_sv'],0)+' blank purchase date','amber','kv-amber'),
     ]
     kpi_html = ''.join(
         f'<div class="kcard kc-{b}"><div class="klbl">{l}</div>'
@@ -636,6 +671,11 @@ td{padding:9px 12px;color:var(--txt2);vertical-align:middle}
 .rb{background:var(--surf2);border-radius:3px;height:8px}.rf{height:100%;border-radius:3px;background:#388BFD}
 .rv{font-size:11.5px;font-family:"IBM Plex Mono",monospace;text-align:right;color:var(--mut)}
 .footer{text-align:center;padding:20px 32px;border-top:1px solid var(--bdr);font-size:11.5px;color:var(--mut)}
+.age-fresh{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(63,185,80,.12);color:#3FB950;border:1px solid rgba(63,185,80,.25);white-space:nowrap}
+.age-ok{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(88,166,255,.12);color:#79C0FF;border:1px solid rgba(88,166,255,.25);white-space:nowrap}
+.age-warn{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(210,153,34,.12);color:#D29922;border:1px solid rgba(210,153,34,.25);white-space:nowrap}
+.age-alert{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(248,81,73,.12);color:#F85149;border:1px solid rgba(248,81,73,.25);white-space:nowrap}
+.age-old{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(139,73,234,.12);color:#A371F7;border:1px solid rgba(139,73,234,.25);white-space:nowrap}
 @media(max-width:900px){.pi{padding:16px}.hdr,.nav{padding-left:16px;padding-right:16px}.crow.c21{grid-template-columns:1fr}.kgrid{grid-template-columns:repeat(2,1fr)}}"""
 
     JS = f"""
@@ -666,6 +706,15 @@ Chart.defaults.font=CF;Chart.defaults.color='#8B949E';
 function fmtT(v){{return v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':Number(v).toLocaleString('en');}}
 function fmtN(v,d=1){{v=parseFloat(v)||0;if(Math.abs(v)>=1e6)return(v/1e6).toFixed(d)+'M';if(Math.abs(v)>=1e3)return(v/1e3).toFixed(d)+'K';return v.toLocaleString('en',{{maximumFractionDigits:d}});}}
 function esc(s){{return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
+function ageBadge(r){{
+  var b=r.ageb||'';
+  if(b==='0–30 days')     return '<span class="age-fresh">'+b+'</span>';
+  if(b==='31–90 days')    return '<span class="age-ok">'+b+'</span>';
+  if(b==='91–180 days')   return '<span class="age-warn">'+b+'</span>';
+  if(b==='181–360 days')  return '<span class="age-alert">'+b+'</span>';
+  if(b==='360+ days')          return '<span class="age-old">'+b+'</span>';
+  return '';
+}}
 
 new Chart(document.getElementById('chM'),{{type:'bar',data:{{labels:ML,datasets:[{{data:MV,backgroundColor:MC,borderRadius:4,borderSkipped:false}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.y).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{display:false}},ticks:{{font:CF}}}},y:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}}}}}}}});
 new Chart(document.getElementById('chC'),{{type:'bar',data:{{labels:CL,datasets:[{{data:CV,backgroundColor:CC,borderRadius:4}}]}},options:{{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.x).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}},y:{{grid:{{display:false}},ticks:{{font:CF}}}}}}}}}});
@@ -694,11 +743,11 @@ function downloadCSV(data,headers,filename){{
 }}
 
 function rowTop(r,i){{var mc=r.mg<10?'c-red':(r.mg>30?'c-green fw6':'');return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.brand||'—')+'</td><td class="tr bold-green">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td></tr>';}}
-function rowZero(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowNeg(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td></tr>';}}
+function rowZero(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'<td>'+ageBadge(r)+'</td>'++'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
+function rowNeg(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'<td>'+ageBadge(r)+'</td>'++'</td></tr>';}}
 function rowOOS(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-green fw6">'+fmtN(r.l3,0)+'</td><td class="tr">'+fmtN(r.m0,1)+'</td><td class="tr">'+fmtN(r.m1,1)+'</td><td class="tr">'+fmtN(r.m2,1)+'</td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowRisk(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.ts,0)+'</td><td class="tr">'+(r.l3||0).toFixed(0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+r.mg.toFixed(1)+'%</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td></tr>';}}
-function rowUW(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+esc(r.lpd||'—')+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
+function rowRisk(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.ts,0)+'</td><td class="tr">'+(r.l3||0).toFixed(0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+r.mg.toFixed(1)+'%</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'<td>'+ageBadge(r)+'</td>'++'</td></tr>';}}
+function rowUW(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+esc(r.lpd||'—')+'</td><td><span class="sup">'+esc(r.sup||'—')+'<td>'+ageBadge(r)+'</td>'++'</span></td></tr>';}}
 function rowPre(r,i){{var mc=r.mg<10?'c-red':(r.mg>30?'c-green fw6':'');var tsBadge=r.ts===0?'<span class="b-red">Zero Sale</span>':'<span class="b-green">'+fmtN(r.ts,0)+'</span>';return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="muted">'+esc(r.brand||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td>'+tsBadge+'</td><td class="tr">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
 
 function renderTable(tbodyId,data,rowFn){{document.getElementById(tbodyId).innerHTML=data.map((r,i)=>rowFn(r,i)).join('');}}
@@ -746,8 +795,7 @@ initSection('risk',RISK_DATA,rowRisk,
 initSection('uw',UW_DATA,rowUW,
   (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value','AED '+fmtS(sv),'red'],['Portfolio Total','AED '+fmtS(K.uw_sv),'red'],['Total Unwanted',fmtS(K.uw_count),'red']],
   ['bc','n','cat','cls','cost','sell','stock','sv','lpq','lpd','sup']);
-initSection('pre',PRE_DATA,rowPre,preStripFn,
-  ['bc','n','cat','cls','grp','brand','sup','stock','sv','ts','l3','cost','sell','mg']);
+initSection('pre',PRE_DATA,rowPre,preStripFn,['bc','n','cat','cls','grp','brand','sup','stock','sv','ts','l3','cost','sell','mg']);
 """
 
     def fbar(prefix):
@@ -830,7 +878,7 @@ initSection('pre',PRE_DATA,rowPre,preStripFn,
   {fbar('zero')}
   <div id="zero-strip"></div>
   <div class="tcard"><div class="thd"><span class="ttitle">Zero Sale Items with Stock</span><div class="tinfo"><span class="b-red">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th>Group</th><th class="tr">Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th>Last Purchase</th><th class="tr">LP Qty</th><th>Supplier</th></tr></thead>
+  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th>Group</th><th class="tr">Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th>Last Purchase</th><th>Ageing</th><th class="tr">LP Qty</th><th>Supplier</th></tr></thead>
   <tbody id="zero-tb"></tbody></table></div></div>
 </div></div>
 
@@ -845,7 +893,7 @@ initSection('pre',PRE_DATA,rowPre,preStripFn,
   {fbar('neg')}
   <div id="neg-strip"></div>
   <div class="tcard"><div class="thd"><span class="ttitle">Negative Stock Items</span><div class="tinfo"><span class="b-red">Sorted by Negative Qty (Worst First)</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Stock Qty</th><th class="tr">Stock Value (AED)</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th>Last Purchase</th><th class="tr">LP Qty</th></tr></thead>
+  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Stock Qty</th><th class="tr">Stock Value (AED)</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th>Last Purchase</th><th>Ageing</th><th class="tr">LP Qty</th></tr></thead>
   <tbody id="neg-tb"></tbody></table></div></div>
 </div></div>
 
@@ -875,7 +923,7 @@ initSection('pre',PRE_DATA,rowPre,preStripFn,
   {fbar('risk')}
   <div id="risk-strip"></div>
   <div class="tcard"><div class="thd"><span class="ttitle">High-Value Slow Moving Items</span><div class="tinfo"><span class="b-amber">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Stock Value (AED)</th><th class="tr">Stock</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Margin%</th><th>Last Purchase</th><th class="tr">LP Qty</th></tr></thead>
+  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Stock Value (AED)</th><th class="tr">Stock</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Margin%</th><th>Last Purchase</th><th>Ageing</th><th class="tr">LP Qty</th></tr></thead>
   <tbody id="risk-tb"></tbody></table></div></div>
 </div></div>
 
@@ -890,7 +938,7 @@ initSection('pre',PRE_DATA,rowPre,preStripFn,
   {fbar('uw')}
   <div id="uw-strip"></div>
   <div class="tcard"><div class="thd"><span class="ttitle">Re-purchased Items with Zero Sales</span><div class="tinfo"><span class="b-red">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Current Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Last PO Qty</th><th>Last Purchase Date</th><th>Last Purchase Supplier</th></tr></thead>
+  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Current Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Last PO Qty</th><th>Last Purchase Date</th><th>Ageing</th><th>Last Purchase Supplier</th></tr></thead>
   <tbody id="uw-tb"></tbody></table></div></div>
 </div></div>
 
