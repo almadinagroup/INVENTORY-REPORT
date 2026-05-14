@@ -339,8 +339,10 @@ def build_kpis(df, month_cols):
         'uw_sv':          round(float(sv[mask_uw].sum()), 0),
         'pre_count':      int(mask_pre.sum()),
         'pre_sv':         round(float(sv[mask_pre].sum()), 0),
-        'pre_zero_count': int((mask_pre & (ts == 0)).sum()),
-        'pre_zero_sv':    round(float(sv[mask_pre & (ts == 0)].sum()), 0),
+        'pre_zero_count': int((mask_pre & (ts <= 0)).sum()),
+        'pre_zero_sv':    round(float(sv[mask_pre & (ts <= 0)].sum()), 0),
+        'pre_sales_count':int((mask_pre & (ts > 0)).sum()),
+        'pre_sales_sv':   round(float(sv[mask_pre & (ts > 0)].sum()), 0),
     }, last3, mask_zero, mask_neg, mask_oos, mask_risk, mask_uw, mask_pre
 
 
@@ -522,7 +524,7 @@ def generate_html(file_bytes, source_filename=''):
         ('OOS Active Demand',     fmtN(K['oos_count'],0),    'Selling but unavailable',                 'red',  'kv-red'),
         ('High Risk Slow Movers', fmtN(K['risk_count'],0),   fmtA(K['risk_sv'],0)+' exposure',          'amber','kv-amber'),
         ('Unwanted Repurchases',  fmtN(K['uw_count'],0),     fmtA(K['uw_sv'],0)+' re-bought, unsold',   'amber','kv-amber'),
-        ('Pre-2025 Stock',        fmtN(K['pre_count'],0),    fmtA(K['pre_sv'],0)+' blank purchase date','amber','kv-amber'),
+        ('Pre-2025 Stock',        fmtN(K['pre_count'],0),    fmtA(K['pre_sv'],0)+f" — {fmtN(K['pre_zero_count'],0)} zero sale / {fmtN(K['pre_sales_count'],0)} selling",'amber','kv-amber'),
     ]
     kpi_html = ''.join(
         f'<div class="kcard kc-{b}"><div class="klbl">{l}</div>'
@@ -727,6 +729,7 @@ function initSection(id,allData,rowFn,stripCfg,csvHeaders){{
   run();
 }}
 
+function preStripFn(d,sv){{var zi=d.filter(function(r){{return r.ts<=0;}});var si=d.filter(function(r){{return r.ts>0;}});var zsv=zi.reduce(function(s,r){{return s+(r.sv||0);}},0);var ssv=si.reduce(function(s,r){{return s+(r.sv||0);}},0);return[['Total Shown',fmtS(d.length),'amb'],['Total Stock Value','AED '+fmtS(sv),'amb'],['Zero Sale — '+fmtS(zi.length),'AED '+fmtS(zsv),'red'],['Still Selling — '+fmtS(si.length),'AED '+fmtS(ssv),'grn']];}}
 initSection('top',TOP_DATA,rowTop,null,['bc','n','cat','cls','brand','ts','l3','stock','sv','cost','sell','mg']);
 initSection('zero',ZERO_DATA,rowZero,
   (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value at Risk','AED '+fmtS(sv),'amb'],['Avg / Item',d.length?'AED '+fmtS(sv/d.length):'—',''],['Total Zero-Sale',fmtS(K.zero_count),'red']],
@@ -743,8 +746,7 @@ initSection('risk',RISK_DATA,rowRisk,
 initSection('uw',UW_DATA,rowUW,
   (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value','AED '+fmtS(sv),'red'],['Portfolio Total','AED '+fmtS(K.uw_sv),'red'],['Total Unwanted',fmtS(K.uw_count),'red']],
   ['bc','n','cat','cls','cost','sell','stock','sv','lpq','lpd','sup']);
-initSection('pre',PRE_DATA,rowPre,
-  (d,sv)=>[['Items Shown',fmtS(d.length),''],['Total Stock Value','AED '+fmtS(sv),'amb'],['Zero Sales Items',fmtS(d.filter(r=>r.ts===0).length),'red'],['Portfolio Total',fmtS(K.pre_count),'amb']],
+initSection('pre',PRE_DATA,rowPre,preStripFn,
   ['bc','n','cat','cls','grp','brand','sup','stock','sv','ts','l3','cost','sell','mg']);
 """
 
