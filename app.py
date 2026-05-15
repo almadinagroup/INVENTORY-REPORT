@@ -750,6 +750,9 @@ function SP(id){{
   var pg=document.getElementById('pg-'+id),nb=document.getElementById('nb-'+id);
   if(pg)pg.classList.add('active');if(nb)nb.classList.add('active');
   window.scrollTo(0,0);
+  if(id==='ov'){{setTimeout(function(){{
+    if(window.Chart){{Chart.instances&&Object.values(Chart.instances).forEach(function(c){{c.resize&&c.resize();}});}}
+  }},50);}}
 }}
 var CF={{family:"'Inter',sans-serif",size:11,color:'#8B949E'}};
 Chart.defaults.font=CF;Chart.defaults.color='#8B949E';
@@ -766,9 +769,18 @@ function ageBadge(r){{
   return '';
 }}
 
-new Chart(document.getElementById('chM'),{{type:'bar',data:{{labels:ML,datasets:[{{data:MV,backgroundColor:MC,borderRadius:4,borderSkipped:false}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.y).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{display:false}},ticks:{{font:CF}}}},y:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}}}}}}}});
-new Chart(document.getElementById('chC'),{{type:'bar',data:{{labels:CL,datasets:[{{data:CV,backgroundColor:CC,borderRadius:4}}]}},options:{{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.x).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}},y:{{grid:{{display:false}},ticks:{{font:CF}}}}}}}}}});
-new Chart(document.getElementById('chH'),{{type:'doughnut',data:{{labels:['Healthy','Zero Sale','Negative','OOS','High Risk'],datasets:[{{data:HV,backgroundColor:['#3FB950','#D29922','#F85149','#A371F7','#388BFD'],borderWidth:2,borderColor:'#161B22'}}]}},options:{{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{{legend:{{position:'bottom',labels:{{font:{{family:"'Inter'",size:10}},padding:8,boxWidth:10,color:'#8B949E'}}}}}}}}}});
+function initCharts(){{
+  if(ML&&ML.length>0&&document.getElementById('chM')){{
+    new Chart(document.getElementById('chM'),{{type:'bar',data:{{labels:ML,datasets:[{{data:MV,backgroundColor:MC,borderRadius:4,borderSkipped:false}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.y).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{display:false}},ticks:{{font:CF}}}},y:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}}}}}}}}}});
+  }}
+  if(CL&&CL.length>0&&document.getElementById('chC')){{
+    new Chart(document.getElementById('chC'),{{type:'bar',data:{{labels:CL,datasets:[{{data:CV,backgroundColor:CC,borderRadius:4}}]}},options:{{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.x).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}},y:{{grid:{{display:false}},ticks:{{font:CF}}}}}}}}}}}});
+  }}
+  if(document.getElementById('chH')){{
+    new Chart(document.getElementById('chH'),{{type:'doughnut',data:{{labels:['Healthy','Zero Sale','Negative','OOS','High Risk'],datasets:[{{data:HV,backgroundColor:['#3FB950','#D29922','#F85149','#A371F7','#388BFD'],borderWidth:2,borderColor:'#161B22'}}]}},options:{{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{{legend:{{position:'bottom',labels:{{font:{{family:"'Inter'",size:10}},padding:8,boxWidth:10,color:'#8B949E'}}}}}}}}}}}}}});
+  }}
+}}
+if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',initCharts);}}else{{setTimeout(initCharts,0);}}
 
 function filterData(data,cat,cls){{
   if((!cat||cat==='All Categories')&&(!cls||cls==='All Classes'))return data;
@@ -793,11 +805,11 @@ function downloadCSV(data,headers,filename){{
 }}
 
 function rowTop(r,i){{var mc=r.mg<10?'c-red':(r.mg>30?'c-green fw6':'');return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.brand||'—')+'</td><td class="tr bold-green">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td></tr>';}}
-function rowZero(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'<td>'+ageBadge(r)+'</td>'++'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowNeg(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'<td>'+ageBadge(r)+'</td>'++'</td></tr>';}}
+function rowZero(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+ageBadge(r)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
+function rowNeg(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+ageBadge(r)+'</td></tr>';}}
 function rowOOS(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-green fw6">'+fmtN(r.l3,0)+'</td><td class="tr">'+fmtN(r.m0,1)+'</td><td class="tr">'+fmtN(r.m1,1)+'</td><td class="tr">'+fmtN(r.m2,1)+'</td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowRisk(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.ts,0)+'</td><td class="tr">'+(r.l3||0).toFixed(0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+r.mg.toFixed(1)+'%</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'<td>'+ageBadge(r)+'</td>'++'</td></tr>';}}
-function rowUW(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+esc(r.lpd||'—')+'</td><td><span class="sup">'+esc(r.sup||'—')+'<td>'+ageBadge(r)+'</td>'++'</span></td></tr>';}}
+function rowRisk(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.ts,0)+'</td><td class="tr">'+(r.l3||0).toFixed(0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+r.mg.toFixed(1)+'%</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+ageBadge(r)+'</td></tr>';}}
+function rowUW(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+esc(r.lpd||'—')+'</td><td>'+ageBadge(r)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
 function rowPre(r,i){{var mc=r.mg<10?'c-red':(r.mg>30?'c-green fw6':'');var tsBadge=r.ts===0?'<span class="b-red">Zero Sale</span>':'<span class="b-green">'+fmtN(r.ts,0)+'</span>';return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="muted">'+esc(r.brand||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td>'+tsBadge+'</td><td class="tr">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
 
 function renderTable(tbodyId,data,rowFn){{document.getElementById(tbodyId).innerHTML=data.map((r,i)=>rowFn(r,i)).join('');}}
@@ -829,7 +841,8 @@ function initSection(id,allData,rowFn,stripCfg,csvHeaders){{
 }}
 
 function preStripFn(d,sv){{var zi=d.filter(function(r){{return r.ts<=0;}});var si=d.filter(function(r){{return r.ts>0;}});var zsv=zi.reduce(function(s,r){{return s+(r.sv||0);}},0);var ssv=si.reduce(function(s,r){{return s+(r.sv||0);}},0);return[['Total Shown',fmtS(d.length),'amb'],['Total Stock Value','AED '+fmtS(sv),'amb'],['Zero Sale — '+fmtS(zi.length),'AED '+fmtS(zsv),'red'],['Still Selling — '+fmtS(si.length),'AED '+fmtS(ssv),'grn']];}}
-initSection('top',TOP_DATA,rowTop,null,['bc','n','cat','cls','brand','ts','l3','stock','sv','cost','sell','mg']);
+function initAll(){{
+  initSection('top',TOP_DATA,rowTop,null,['bc','n','cat','cls','brand','ts','l3','stock','sv','cost','sell','mg']);
 initSection('zero',ZERO_DATA,rowZero,
   (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value at Risk','AED '+fmtS(sv),'amb'],['Avg / Item',d.length?'AED '+fmtS(sv/d.length):'—',''],['Total Zero-Sale',fmtS(K.zero_count),'red']],
   ['bc','n','cat','cls','grp','sup','stock','sv','cost','sell','lpd','lpq']);
@@ -846,6 +859,9 @@ initSection('uw',UW_DATA,rowUW,
   (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value','AED '+fmtS(sv),'red'],['Portfolio Total','AED '+fmtS(K.uw_sv),'red'],['Total Unwanted',fmtS(K.uw_count),'red']],
   ['bc','n','cat','cls','cost','sell','stock','sv','lpq','lpd','sup']);
 initSection('pre',PRE_DATA,rowPre,preStripFn,['bc','n','cat','cls','grp','brand','sup','stock','sv','ts','l3','cost','sell','mg']);
+  SP('ov');
+}}
+if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',initAll);}}else{{initAll();}}
 """
 
     def fbar(prefix):
@@ -1029,7 +1045,6 @@ initSection('pre',PRE_DATA,rowPre,preStripFn,['bc','n','cat','cls','grp','brand'
 </div></div>
 
 <div class="footer">AL MADINA GROUP &nbsp;|&nbsp; Inventory Intelligence Report &nbsp;|&nbsp; {dlabel}</div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>{JS}</script>
 </body></html>"""
 
@@ -1085,11 +1100,30 @@ if uploaded_file:
 
     st.markdown("<hr style='border-color:#30363D;margin:16px 0'>", unsafe_allow_html=True)
 
-    # ── Column check: run once per file, persist result in session_state ──
+    # ── Column check: run once per file, show live step status ──
     file_key = f"col_check_{uploaded_file.name}_{sz:.1f}"
     if st.session_state.get('_col_check_key') != file_key:
+        st.markdown("""
+<div style="background:#161B22;border:1px solid #30363D;border-radius:8px;padding:14px 18px;margin:8px 0">
+  <div style="font-size:12px;font-weight:600;color:#8B949E;letter-spacing:.06em;margin-bottom:10px">COLUMN VALIDATION</div>
+  <div id="chk-steps" style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:#C9D1D9"></div>
+</div>""", unsafe_allow_html=True)
+
+        chk_area = st.empty()
+
+        def _chk_step(msg, status="running"):
+            icon = {"running":"⏳","ok":"✅","warn":"⚠️","err":"❌"}.get(status,"⏳")
+            col  = {"running":"#8B949E","ok":"#3FB950","warn":"#D29922","err":"#F85149"}.get(status,"#8B949E")
+            chk_area.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #21262D">' 
+                f'<span>{icon}</span><span style="color:{col}">{msg}</span></div>',
+                unsafe_allow_html=True)
+
         try:
             import pandas as pd
+            import time
+
+            _chk_step("Reading file headers…", "running")
             file_bytes_val = uploaded_file.getvalue()
             engine = None
             for eng in ('calamine', 'openpyxl', 'xlrd'):
@@ -1102,21 +1136,40 @@ if uploaded_file:
                     pass
 
             if engine:
+                _chk_step(f"Opened with engine: {engine}", "ok")
                 df_h = pd.read_excel(BytesIO(file_bytes_val), header=0, nrows=1, engine=engine)
                 raw_cols = list(df_h.columns)
             else:
+                _chk_step("Using built-in XML reader…", "ok")
                 df_h, _ = _read_excel_stdlib(file_bytes_val)
                 raw_cols = list(df_h.columns)
 
+            _chk_step(f"Found {len(raw_cols)} columns — checking required fields…", "running")
             norm_cols = [normalise_col(c) for c in raw_cols]
             missing_req_chk, missing_opt_chk = check_missing_columns(norm_cols)
             month_preview_chk = detect_months(norm_cols)
-            st.session_state['_col_check_key']     = file_key
-            st.session_state['_missing_req']        = missing_req_chk
-            st.session_state['_missing_opt']        = missing_opt_chk
-            st.session_state['_month_preview']      = month_preview_chk
-            st.session_state['_col_check_ok']       = True
+
+            if missing_req_chk:
+                _chk_step(f"Missing {len(missing_req_chk)} required column(s) — see below", "err")
+            else:
+                _chk_step("All required columns present ✓", "ok")
+
+            if missing_opt_chk:
+                _chk_step(f"Optional columns not found (ok to proceed): {', '.join(missing_opt_chk)}", "warn")
+
+            if month_preview_chk:
+                _chk_step(f"{len(month_preview_chk)} monthly columns detected: {', '.join(month_preview_chk[:4])}{'…' if len(month_preview_chk)>4 else ''}", "ok")
+            else:
+                _chk_step("No monthly columns found — trend chart will be empty", "warn")
+
+            st.session_state['_col_check_key']    = file_key
+            st.session_state['_missing_req']       = missing_req_chk
+            st.session_state['_missing_opt']       = missing_opt_chk
+            st.session_state['_month_preview']     = month_preview_chk
+            st.session_state['_col_check_ok']      = True
+
         except Exception as e:
+            _chk_step(f"Validation error: {e}", "err")
             st.session_state['_col_check_key']  = file_key
             st.session_state['_missing_req']    = []
             st.session_state['_missing_opt']    = []
@@ -1124,32 +1177,42 @@ if uploaded_file:
             st.session_state['_col_check_ok']   = False
             st.session_state['_col_check_err']  = str(e)
 
+    # ── Show persisted check results (on reruns after Generate) ──
+    else:
+        missing_req   = st.session_state.get('_missing_req', [])
+        missing_opt   = st.session_state.get('_missing_opt', [])
+        month_preview = st.session_state.get('_month_preview', [])
+        col_check_ok  = st.session_state.get('_col_check_ok', False)
+        col_check_err = st.session_state.get('_col_check_err', '')
+
+        lines = []
+        if not col_check_ok and col_check_err:
+            lines.append(f'<div style="color:#F85149">❌ Validation error: {col_check_err}</div>')
+        elif col_check_ok:
+            if missing_req:
+                lines.append(f'<div style="color:#F85149">❌ Missing {len(missing_req)} required column(s) — re-upload a corrected file</div>')
+            else:
+                lines.append('<div style="color:#3FB950">✅ All required columns present</div>')
+            if missing_opt:
+                lines.append(f'<div style="color:#D29922">⚠️ Optional missing: {', '.join(missing_opt)}</div>')
+            if month_preview:
+                lines.append(f'<div style="color:#79C0FF">📅 {len(month_preview)} monthly columns</div>')
+            else:
+                lines.append('<div style="color:#D29922">⚠️ No monthly columns</div>')
+        if lines:
+            st.markdown(
+                '<div style="background:#161B22;border:1px solid #30363D;border-radius:8px;padding:12px 16px;margin:8px 0;font-size:13px">' +
+                '<div style="font-size:12px;font-weight:600;color:#8B949E;letter-spacing:.06em;margin-bottom:8px">COLUMN VALIDATION</div>' +
+                ''.join(lines) + '</div>',
+                unsafe_allow_html=True)
+
     missing_req   = st.session_state.get('_missing_req', [])
     missing_opt   = st.session_state.get('_missing_opt', [])
     month_preview = st.session_state.get('_month_preview', [])
-    col_check_ok  = st.session_state.get('_col_check_ok', False)
-    col_check_err = st.session_state.get('_col_check_err', '')
-
-    if not col_check_ok and col_check_err:
-        st.warning(f"Could not pre-validate columns: {col_check_err}")
-    elif col_check_ok:
-        if missing_req:
-            st.error("❌ **Missing required columns** — not found in your file:\n\n" +
-                     "\n".join(f"- `{c}`" for c in missing_req) +
-                     "\n\nCheck your export (matching is case-insensitive).")
-        else:
-            st.success("✅ All required columns found")
-
-        if missing_opt:
-            st.warning("⚠️ Optional columns not found (dashboard generates fine, those fields show '—'): " +
-                       "  ".join(f"`{c}`" for c in missing_opt))
-
-        if month_preview:
-            st.info(f"📅 Monthly columns detected: {', '.join(month_preview[:8])}{'…' if len(month_preview)>8 else ''}")
-        else:
-            st.warning("⚠️ No monthly columns found (e.g. `May, 2025`). Monthly trend chart will be empty.")
 
     if missing_req:
+        st.error("❌ **Missing required columns** — fix before generating:\n\n" +
+                 "\n".join(f"- `{c}`" for c in missing_req))
         st.markdown("""
 <div style="background:#2D1117;border:1px solid #6E3B3B;border-radius:8px;
      padding:12px 16px;color:#F85149;font-size:13px;margin:8px 0">
@@ -1157,31 +1220,71 @@ if uploaded_file:
 </div>""", unsafe_allow_html=True)
     else:
         if st.button("⚡  Generate Dashboard", type="primary", use_container_width=True):
+
+            # ── Live step-by-step generation status ──
+            gen_box = st.empty()
+
+            def _gen_step(steps_done):
+                """Render the generation steps list, marking each step as done/running/pending."""
+                steps = [
+                    ("📂", "Reading Excel file"),
+                    ("🔍", "Analysing inventory data"),
+                    ("🧮", "Computing KPIs & segments"),
+                    ("🏗️", "Building HTML dashboard"),
+                    ("✅", "Done"),
+                ]
+                rows = []
+                for i, (ico, lbl) in enumerate(steps):
+                    if i < steps_done:
+                        style = "color:#3FB950"
+                        tick  = "✓"
+                    elif i == steps_done:
+                        style = "color:#79C0FF"
+                        tick  = "⏳"
+                    else:
+                        style = "color:#484F58"
+                        tick  = "○"
+                    rows.append(
+                        f'<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'
+                        f'border-bottom:1px solid #21262D;{style}">' 
+                        f'<span style="font-size:16px">{ico}</span>'
+                        f'<span style="flex:1;font-size:13px">{lbl}</span>'
+                        f'<span style="font-size:12px;opacity:.8">{tick}</span></div>'
+                    )
+                gen_box.markdown(
+                    '<div style="background:#161B22;border:1px solid #30363D;border-radius:8px;padding:14px 18px;margin:8px 0">' +
+                    '<div style="font-size:12px;font-weight:600;color:#8B949E;letter-spacing:.06em;margin-bottom:10px">GENERATING DASHBOARD</div>' +
+                    ''.join(rows) + '</div>',
+                    unsafe_allow_html=True)
+
             progress = st.progress(0, text="Starting…")
             try:
-                progress.progress(10, text="Reading Excel file…")
+                _gen_step(0); progress.progress(10, text="Reading Excel file…")
                 file_bytes = uploaded_file.getvalue()
 
-                progress.progress(30, text="Analysing inventory data…")
+                _gen_step(1); progress.progress(25, text="Analysing inventory data…")
                 df_p, mc_p = read_excel_df(file_bytes)
+
+                _gen_step(2); progress.progress(45, text="Computing KPIs & segments…")
                 K_p, *_    = build_kpis(df_p, mc_p)
                 del df_p; gc.collect()
 
                 st.markdown(
-                    f'<div style="background:#161B22;border:1px solid #30363D;border-radius:8px;'
-                    f'padding:14px 18px;font-size:13px;color:#C9D1D9;margin:8px 0">'
-                    f'✅ <b style="color:#E6EDF3">{K_p["total_items"]:,}</b> SKUs &nbsp;|&nbsp;'
-                    f'🔴 <b style="color:#F85149">{K_p["neg_count"]:,}</b> negative &nbsp;|&nbsp;'
-                    f'⚠️ <b style="color:#D29922">{K_p["zero_count"]:,}</b> zero sale &nbsp;|&nbsp;'
-                    f'🚨 <b style="color:#F85149">{K_p["oos_count"]:,}</b> OOS &nbsp;|&nbsp;'
-                    f'🛑 <b style="color:#F85149">{K_p["uw_count"]:,}</b> unwanted repurchases &nbsp;|&nbsp;'
-                    f'📦 <b style="color:#D29922">{K_p["pre_count"]:,}</b> pre-2025</div>',
+                    f'<div style="background:#0D2818;border:1px solid #1A7431;border-radius:8px;'
+                    f'padding:12px 18px;font-size:13px;color:#C9D1D9;margin:6px 0">'
+                    f'<span style="color:#3FB950;font-weight:600">Data scan complete</span> &nbsp;—&nbsp;'
+                    f'<b style="color:#E6EDF3">{K_p["total_items"]:,}</b> SKUs &nbsp;·&nbsp;'
+                    f'<span style="color:#F85149">{K_p["neg_count"]:,} negative</span> &nbsp;·&nbsp;'
+                    f'<span style="color:#D29922">{K_p["zero_count"]:,} zero-sale</span> &nbsp;·&nbsp;'
+                    f'<span style="color:#F85149">{K_p["oos_count"]:,} OOS</span> &nbsp;·&nbsp;'
+                    f'<span style="color:#D29922">{K_p["uw_count"]:,} unwanted repurchases</span> &nbsp;·&nbsp;'
+                    f'<span style="color:#D29922">{K_p["pre_count"]:,} pre-2025</span></div>',
                     unsafe_allow_html=True)
 
-                progress.progress(50, text="Building dashboard… (30–60s for large files)")
+                _gen_step(3); progress.progress(55, text="Building HTML dashboard… (may take 30–60s for large files)")
                 html_content = generate_html(file_bytes, source_filename=uploaded_file.name)
 
-                progress.progress(100, text="Done!")
+                _gen_step(4); progress.progress(100, text="Done!")
                 st.success("✅  Dashboard generated successfully!")
 
                 out_name = uploaded_file.name.rsplit('.', 1)[0] + '_dashboard.html'
