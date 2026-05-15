@@ -222,6 +222,29 @@ def read_excel_df(file_bytes):
         if col in df.columns:
             df[col] = df[col].fillna('').astype(str)
 
+    # ── LP Date: parse to datetime so .isna() reliably catches blanks ──
+    if 'LP Date' in df.columns:
+        import pandas as pd
+        # First convert any Excel serial numbers (numeric floats) to NaT/dates
+        def _parse_lpd(v):
+            if v is None: return pd.NaT
+            s = str(v).strip()
+            if s in ('', 'nan', 'NaT', 'None', '0', 'NaTType') or 'NaT' in s:
+                return pd.NaT
+            # Try direct pandas parse
+            try:
+                return pd.to_datetime(s, dayfirst=True, errors='coerce')
+            except Exception:
+                return pd.NaT
+        # If column is numeric (Excel serial), convert via pd origin
+        if pd.api.types.is_numeric_dtype(df['LP Date']):
+            df['LP Date'] = pd.to_datetime(
+                df['LP Date'].replace(0, pd.NaT), unit='D',
+                origin='1899-12-30', errors='coerce'
+            )
+        else:
+            df['LP Date'] = df['LP Date'].apply(_parse_lpd)
+
     df.dropna(how='all', inplace=True)
     if 'Item Name' in df.columns:
         df = df[df['Item Name'].notna() &
@@ -297,6 +320,21 @@ def _read_excel_stdlib(file_bytes):
         if col in df.columns: df[col] = df[col].fillna('').astype('category')
     for col in ['Item Name','Item Bar Code','Supplier','LP Supplier']:
         if col in df.columns: df[col] = df[col].fillna('').astype(str)
+    # ── LP Date: parse to datetime so isna() catches all blank variants ──
+    if 'LP Date' in df.columns:
+        def _parse_lpd2(v):
+            if v is None: return pd.NaT
+            s = str(v).strip()
+            if s in ('', 'nan', 'NaT', 'None', '0', 'NaTType') or 'NaT' in s:
+                return pd.NaT
+            try:
+                f = float(s)
+                if f == 0: return pd.NaT
+                return pd.Timestamp('1899-12-30') + pd.Timedelta(days=f)
+            except ValueError:
+                pass
+            return pd.to_datetime(s, dayfirst=True, errors='coerce')
+        df['LP Date'] = df['LP Date'].apply(_parse_lpd2)
     df.dropna(how='all', inplace=True)
     if 'Item Name' in df.columns:
         df = df[df['Item Name'].notna() &
@@ -320,8 +358,20 @@ def build_kpis(df, month_cols):
     mask_neg  = stock < 0
     mask_oos  = (l3 > 0) & (stock <= 0)
     mask_risk = (sv > 200) & (ts < 10) & (stock > 0)
+    # mask_uw: zero-sale items that were re-purchased (LP Date present, LP Qty < current stock)
     mask_uw   = mask_zero & (lpd.notna() if lpd is not None else False) & (lpq < stock)
-    mask_pre  = (stock > 0) & (lpd.isna() if lpd is not None else False)
+    # mask_pre: items with stock but blank/missing LP Date (purchased pre-2025 / no PO record)
+    # After LP Date normalisation in read_excel_df, blanks are NaT — isna() catches them.
+    # Extra safety: also catch string blanks in case dtype is object.
+    if lpd is not None:
+        import pandas as _pd
+        if _pd.api.types.is_datetime64_any_dtype(lpd):
+            _lpd_blank = lpd.isna()
+        else:
+            _lpd_blank = lpd.isna() | lpd.astype(str).str.strip().isin(['','nan','NaT','None','0','NaTType'])
+        mask_pre = (stock > 0) & _lpd_blank
+    else:
+        mask_pre = (stock > 0) & False
 
     return {
         'total_items':    len(df),
@@ -1035,7 +1085,9 @@ if uploaded_file:
 
     st.markdown("<hr style='border-color:#30363D;margin:16px 0'>", unsafe_allow_html=True)
 
-    with st.spinner("Checking columns…"):
+    # ── Column check: run once per file, persist result in session_state ──
+    file_key = f"col_check_{uploaded_file.name}_{sz:.1f}"
+    if st.session_state.get('_col_check_key') != file_key:
         try:
             import pandas as pd
             file_bytes_val = uploaded_file.getvalue()
@@ -1057,28 +1109,45 @@ if uploaded_file:
                 raw_cols = list(df_h.columns)
 
             norm_cols = [normalise_col(c) for c in raw_cols]
-            missing_req, missing_opt = check_missing_columns(norm_cols)
-            month_preview = detect_months(norm_cols)
-
-            if missing_req:
-                st.error("❌ **Missing required columns** — not found in your file:\n\n" +
-                         "\n".join(f"- `{c}`" for c in missing_req) +
-                         "\n\nCheck your export (matching is case-insensitive).")
-            else:
-                st.success("✅ All required columns found")
-
-            if missing_opt:
-                st.warning("⚠️ Optional columns not found (dashboard generates fine, those fields show '—'): " +
-                           "  ".join(f"`{c}`" for c in missing_opt))
-
-            if month_preview:
-                st.info(f"📅 Monthly columns detected: {', '.join(month_preview[:8])}{'…' if len(month_preview)>8 else ''}")
-            else:
-                st.warning("⚠️ No monthly columns found (e.g. `May, 2025`). Monthly trend chart will be empty.")
-
+            missing_req_chk, missing_opt_chk = check_missing_columns(norm_cols)
+            month_preview_chk = detect_months(norm_cols)
+            st.session_state['_col_check_key']     = file_key
+            st.session_state['_missing_req']        = missing_req_chk
+            st.session_state['_missing_opt']        = missing_opt_chk
+            st.session_state['_month_preview']      = month_preview_chk
+            st.session_state['_col_check_ok']       = True
         except Exception as e:
-            st.warning(f"Could not pre-validate columns: {e}")
-            missing_req = []
+            st.session_state['_col_check_key']  = file_key
+            st.session_state['_missing_req']    = []
+            st.session_state['_missing_opt']    = []
+            st.session_state['_month_preview']  = []
+            st.session_state['_col_check_ok']   = False
+            st.session_state['_col_check_err']  = str(e)
+
+    missing_req   = st.session_state.get('_missing_req', [])
+    missing_opt   = st.session_state.get('_missing_opt', [])
+    month_preview = st.session_state.get('_month_preview', [])
+    col_check_ok  = st.session_state.get('_col_check_ok', False)
+    col_check_err = st.session_state.get('_col_check_err', '')
+
+    if not col_check_ok and col_check_err:
+        st.warning(f"Could not pre-validate columns: {col_check_err}")
+    elif col_check_ok:
+        if missing_req:
+            st.error("❌ **Missing required columns** — not found in your file:\n\n" +
+                     "\n".join(f"- `{c}`" for c in missing_req) +
+                     "\n\nCheck your export (matching is case-insensitive).")
+        else:
+            st.success("✅ All required columns found")
+
+        if missing_opt:
+            st.warning("⚠️ Optional columns not found (dashboard generates fine, those fields show '—'): " +
+                       "  ".join(f"`{c}`" for c in missing_opt))
+
+        if month_preview:
+            st.info(f"📅 Monthly columns detected: {', '.join(month_preview[:8])}{'…' if len(month_preview)>8 else ''}")
+        else:
+            st.warning("⚠️ No monthly columns found (e.g. `May, 2025`). Monthly trend chart will be empty.")
 
     if missing_req:
         st.markdown("""
