@@ -399,7 +399,10 @@ def build_kpis(df, month_cols):
 def fmtN(n, d=1):
     try:
         n = float(n)
-        if abs(n) >= 1_000_000: return f"{n/1_000_000:.{d}f}M"
+        # Millions: always show 1 decimal so 1.1M vs 1.9M is visible
+        if abs(n) >= 1_000_000:
+            return f"{n/1_000_000:.1f}M" if d == 0 else f"{n/1_000_000:.{d}f}M"
+        # Thousands: respect requested decimals
         if abs(n) >= 1_000:     return f"{n/1_000:.{d}f}K"
         return f"{n:,.{d}f}"
     except: return "—"
@@ -409,12 +412,32 @@ def esc(s): return str(s).replace('&','&amp;').replace('"','&quot;').replace('<'
 
 
 def lp_label(lpd_val, lpq_val=0):
-    """Return LP date string. Blank/NaT -> empty string (dash in table)."""
+    """Return LP date as DD-MMM-YYYY (e.g. 12-May-2026). Blank/NaT -> empty string."""
     if lpd_val is None: return ''
+    # If it's already a datetime/Timestamp, format directly
+    try:
+        # pandas Timestamp / python datetime — both have strftime
+        if hasattr(lpd_val, 'strftime'):
+            import pandas as pd
+            if pd.isna(lpd_val): return ''
+            return lpd_val.strftime('%d-%b-%Y')
+    except Exception:
+        pass
     s = str(lpd_val).strip()
-    if s in ('', 'nan', 'NaT', 'None', '0', 'NaTType'): return ''
-    if 'NaT' in s: return ''
-    return s[:20]
+    if s in ('', 'nan', 'NaT', 'None', '0', 'NaTType') or 'NaT' in s: return ''
+    # Strip time component if present: "2026-05-12 00:00:00" -> "2026-05-12"
+    if ' 00:00:00' in s: s = s.replace(' 00:00:00', '')
+    elif ' ' in s and ':' in s.split(' ',1)[1]:
+        # any trailing time portion
+        s = s.split(' ',1)[0]
+    # Try to reformat ISO yyyy-mm-dd -> dd-MMM-yyyy
+    try:
+        from datetime import datetime as _dt
+        for fmt in ('%Y-%m-%d', '%d-%b-%Y', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y'):
+            try: return _dt.strptime(s, fmt).strftime('%d-%b-%Y')
+            except: pass
+    except: pass
+    return s[:11]
 
 
 # Report reference date — use today dynamically
@@ -763,7 +786,7 @@ select.fsel:focus,input.fin:focus{border-color:var(--accent)}
 .ttitle{font-size:13.5px;font-weight:600;color:var(--txt)}
 .tinfo{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .tsc{overflow-x:auto}.tmh{max-height:600px;overflow-y:auto}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
+table{width:100%;min-width:1100px;border-collapse:collapse;font-size:12.5px}
 thead tr{background:var(--surf2);position:sticky;top:0;z-index:2}
 th{text-align:left;padding:10px 12px;font-size:10.5px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:1px solid var(--bdr);user-select:none}
 th.srt{cursor:pointer;transition:color .1s}
@@ -894,7 +917,7 @@ var OOS_LABELS = __D.OOS_LABELS, TOP_SUP = __D.TOP_SUP;
 
 // ─── UTILITIES ───────────────────────────────────────────────────────────
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function fmtN(v,d){ if(d==null) d=1; v=parseFloat(v)||0; var a=Math.abs(v); if(a>=1e6) return (v/1e6).toFixed(d)+'M'; if(a>=1e3) return (v/1e3).toFixed(d)+'K'; return v.toLocaleString('en',{maximumFractionDigits:d}); }
+function fmtN(v,d){ if(d==null) d=1; v=parseFloat(v)||0; var a=Math.abs(v); if(a>=1e6) return (v/1e6).toFixed(Math.max(d,1))+'M'; if(a>=1e3) return (v/1e3).toFixed(d)+'K'; return v.toLocaleString('en',{maximumFractionDigits:d}); }
 function fmtT(v){ v=parseFloat(v)||0; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; if(v>=1e3) return (v/1e3).toFixed(0)+'K'; return Number(v).toLocaleString('en'); }
 function fmtS(n){ n=parseFloat(n)||0; var a=Math.abs(n); if(a>=1e6) return (n/1e6).toFixed(1)+'M'; if(a>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toLocaleString('en',{maximumFractionDigits:0}); }
 function ageBadge(r){
@@ -1282,10 +1305,17 @@ window.downloadCSV = downloadCSV;
 // ─── SECTION INITIALISER ────────────────────────────────────────────────
 function initSection(cfg){
   var id = cfg.id;
+  // Default sort key per section (matches the Python-side pre-sort)
+  var defKey = {
+    top: 'ts', zero: 'sv', neg: 'stock', oos: 'l3',
+    risk: 'sv', uw: 'sv', pre: 'sv'
+  }[id] || null;
+  var defDir = (id === 'neg') ? 'asc' : 'desc';  // worst-negative-first for neg
   STATE[id] = {
     all: DATASETS[id], filtered: DATASETS[id],
     cat: 'All Categories', cls: 'All Classes', q: '',
-    sortKey: null, sortDir: 'desc',
+    sortKey: defKey, sortDir: defDir,
+    defKey: defKey, defDir: defDir,
     page: 1, pageSize: 50,
     rowFn: cfg.rowFn, stripFn: cfg.stripFn, csvHeaders: cfg.csvHeaders
   };
@@ -1329,7 +1359,8 @@ function initSection(cfg){
     STATE[id].cls = 'All Classes';
     STATE[id].q   = '';
     STATE[id].page = 1;
-    STATE[id].sortKey = null;
+    STATE[id].sortKey = STATE[id].defKey;
+    STATE[id].sortDir = STATE[id].defDir;
     updClsOpts(id+'-cls', 'All Categories');
     renderSection(id);
   };
@@ -1684,7 +1715,7 @@ if(document.readyState === 'loading'){
   <div class="pdesc">Items with no sales recorded, currently holding positive stock. Pre-2025 items (blank LP Date) have a dedicated page.</div>
   <div class="arow">
     <div class="abox red"><div class="ah"><i class="ai">⚠</i><span class="at">Dead Stock — {fmtN(K['zero_count'],0)} Items</span></div><div class="ab">Zero sales with no demonstrated demand. Capital tied up with no return.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">₹</i><span class="at">Capital at Risk — {fmtA(K['zero_sv'],0)}</span></div><div class="ab">Immediate action: supplier return, clearance promotion, or write-off.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">◈</i><span class="at">Capital at Risk — {fmtA(K['zero_sv'],0)}</span></div><div class="ab">Immediate action: supplier return, clearance promotion, or write-off.</div></div>
     <div class="abox blu"><div class="ah"><i class="ai">→</i><span class="at">Action Required</span></div><div class="ab">Classify: (1) Supplier return, (2) Promotional clearance, (3) Write-off. All within 30 days.</div></div>
   </div>
   {fbar('zero')}
