@@ -511,7 +511,7 @@ def cls_summary(df, mask_zero, mask_neg, mask_oos):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — HTML GENERATOR
+# SECTION 2 — HTML GENERATOR (rewritten — robust, searchable, sortable)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def generate_html(file_bytes, source_filename=''):
@@ -542,13 +542,11 @@ def generate_html(file_bytes, source_filename=''):
 
     ml  = [m.replace(', 20', "'") for m in months_sorted]
     mv  = [round(float(df[m].sum()), 1) if m in df.columns else 0 for m in months_sorted]
-    mc  = ['#1e3a5f'] * (len(months_sorted) - 1) + ['#3B82F6']
     if 'Class' in df.columns and ts_col in df.columns:
         tc = df.groupby('Class', observed=True)[ts_col].sum().sort_values(ascending=False).head(10)
         cl = [c[:16]+'…' if len(c) > 16 else c for c in tc.index.astype(str).tolist()]
         cv = [round(float(v), 1) for v in tc.values]
     else: cl, cv = [], []
-    cat_c = ['#1B2B4B','#1e3a5f','#1e40af','#1d4ed8','#2563eb','#3b82f6','#60a5fa','#0f766e','#0d9488','#14b8a6']
     hv = [max(0, K['in_stock']-K['zero_count']-K['risk_count']),
           K['zero_count'], K['neg_count'], K['oos_count'], K['risk_count']]
 
@@ -597,6 +595,19 @@ def generate_html(file_bytes, source_filename=''):
 
     cls_table = cls_summary(df, mask_zero, mask_neg, mask_oos)
 
+    # Top suppliers & top categories (NEW — for Insights page)
+    top_sup = []
+    if 'Supplier' in df.columns and ts_col in df.columns:
+        sg = df.groupby('Supplier', observed=True).agg(
+            sales=(ts_col, 'sum'), sv=(sv_col, 'sum'), items=('Item Name', 'count')
+        ).reset_index()
+        sg = sg[sg['Supplier'].astype(str).str.strip() != ''].sort_values('sales', ascending=False).head(10)
+        for _, r in sg.iterrows():
+            top_sup.append({
+                'name': str(r['Supplier'])[:40], 'sales': round(float(r['sales']), 0),
+                'sv': round(float(r['sv']), 0), 'items': int(r['items'])
+            })
+
     del df, df_top, df_zero, df_neg, df_oos, df_risk, df_uw, df_pre
     gc.collect()
 
@@ -635,277 +646,1009 @@ def generate_html(file_bytes, source_filename=''):
     oos_h    = [esc(last3_labels[0]), esc(last3_labels[1]), esc(last3_labels[2])]
     cat_opts = ''.join(f'<option value="{esc(c)}">{esc(c)}</option>' for c in ['All Categories'] + cats)
 
-    CSS = """:root{
-  --bg:#0D1117;--surf:#161B22;--surf2:#21262D;--bdr:#30363D;--bdr2:#484F58;
-  --txt:#E6EDF3;--txt2:#C9D1D9;--mut:#8B949E;
+    # ── CSS — single triple-quoted string, no substitution needed ────────────
+    CSS = r"""
+:root{
+  --bg:#0D1117;--surf:#161B22;--surf2:#21262D;--surf3:#2A3038;--bdr:#30363D;--bdr2:#484F58;
+  --txt:#E6EDF3;--txt2:#C9D1D9;--mut:#8B949E;--accent:#388BFD;
   --brand:#1B2B4B;--brand-l:#2D4A7A;--brand-t:#0D1F3C;
   --red:#F85149;--red-t:#2D1117;--red-b:#6E3B3B;
   --amb:#D29922;--amb-t:#2D2000;--amb-b:#7B5E08;
   --grn:#3FB950;--grn-t:#0D2818;--grn-b:#1A7431;
   --blu:#79C0FF;--blu-t:#0D1F3C;--blu-b:#1B4B7A;
-  --slt:#8B949E;--r:8px;--sh:0 1px 4px rgba(0,0,0,.4)
+  --pur:#A371F7;--pur-t:#1F1230;--pur-b:#4B2E7A;
+  --slt:#8B949E;--r:8px;--sh:0 1px 4px rgba(0,0,0,.4);
+  --sh-md:0 4px 12px rgba(0,0,0,.5);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--txt);font-family:"Inter",sans-serif;font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased}
-::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-track{background:var(--surf)}::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:3px}
-.hdr{background:#161B22;color:var(--txt);padding:0 32px;display:flex;align-items:center;justify-content:space-between;height:60px;position:sticky;top:0;z-index:200;border-bottom:1px solid #30363D}
-.hdr-l{display:flex;align-items:center;gap:16px}.logo{display:flex;align-items:center;gap:10px}
-.lm{width:34px;height:34px;background:linear-gradient(135deg,#1B2B4B,#3B82F6);border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff}
-.lt{font-weight:700;font-size:15px;letter-spacing:-.2px;color:var(--txt)}.ls{font-size:10.5px;color:var(--mut)}
-.hsep{width:1px;height:28px;background:rgba(255,255,255,.1)}.hlbl{font-size:12px;color:var(--mut)}
-.hr{font-size:11px;color:var(--mut);font-family:"IBM Plex Mono",monospace}
-.nav{background:#161B22;border-bottom:1px solid #30363D;display:flex;padding:0 32px;overflow-x:auto;gap:2px}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;font-size:13.5px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:var(--surf)}
+::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:#5d6671}
+
+/* HEADER */
+.hdr{background:linear-gradient(180deg,#161B22 0%,#13181F 100%);color:var(--txt);padding:0 32px;display:flex;align-items:center;justify-content:space-between;height:64px;position:sticky;top:0;z-index:200;border-bottom:1px solid #30363D;backdrop-filter:blur(8px)}
+.hdr-l{display:flex;align-items:center;gap:18px}.logo{display:flex;align-items:center;gap:11px}
+.lm{width:38px;height:38px;background:linear-gradient(135deg,#1B2B4B 0%,#2563EB 100%);border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.3);letter-spacing:-.5px}
+.lt{font-weight:700;font-size:15px;letter-spacing:-.2px;color:var(--txt);line-height:1.15}
+.ls{font-size:10.5px;color:var(--mut);line-height:1.15;margin-top:1px}
+.hsep{width:1px;height:28px;background:rgba(255,255,255,.1)}
+.hlbl{font-size:12px;color:var(--mut);font-weight:500}
+.hr-r{display:flex;align-items:center;gap:14px}
+.hmeta{font-size:11px;color:var(--mut);font-family:"IBM Plex Mono",ui-monospace,monospace;text-align:right;line-height:1.4}
+.hmeta b{color:var(--txt);font-weight:600;font-family:"Inter",sans-serif;font-size:11.5px}
+
+/* GLOBAL SEARCH */
+.gs-wrap{position:relative;flex:1;max-width:480px;margin:0 18px}
+.gs-input{width:100%;background:rgba(255,255,255,.04);border:1px solid #30363D;border-radius:7px;color:var(--txt);font-family:"Inter",sans-serif;font-size:13px;padding:8px 36px 8px 36px;outline:none;transition:border-color .15s,background .15s}
+.gs-input::placeholder{color:#6e7681}
+.gs-input:focus{border-color:var(--accent);background:rgba(56,139,253,.08)}
+.gs-ico{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--mut);pointer-events:none;font-size:14px}
+.gs-kbd{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--mut);background:rgba(255,255,255,.05);border:1px solid #30363D;border-radius:3px;padding:1px 6px;font-family:"IBM Plex Mono",monospace}
+.gs-results{position:absolute;left:0;right:0;top:calc(100% + 6px);background:#161B22;border:1px solid #30363D;border-radius:8px;box-shadow:var(--sh-md);max-height:420px;overflow-y:auto;display:none;z-index:300}
+.gs-results.open{display:block}
+.gs-result{padding:10px 14px;border-bottom:1px solid #21262D;cursor:pointer;display:flex;align-items:center;gap:12px;transition:background .1s}
+.gs-result:last-child{border-bottom:none}
+.gs-result:hover,.gs-result.sel{background:#21262D}
+.gs-result .gsn{font-size:13px;font-weight:500;color:var(--txt);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gs-result .gsmeta{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--mut);white-space:nowrap}
+.gs-result .gsbadge{font-size:10px;font-weight:600;padding:1px 7px;border-radius:3px;white-space:nowrap}
+.gs-empty{padding:20px;text-align:center;color:var(--mut);font-size:12.5px}
+.gs-section{padding:7px 14px;font-size:10px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;background:#13181F;border-bottom:1px solid #21262D}
+
+/* NAV */
+.nav{background:#161B22;border-bottom:1px solid #30363D;display:flex;padding:0 32px;overflow-x:auto;gap:2px;position:sticky;top:64px;z-index:150}
 .nav::-webkit-scrollbar{height:0}
-.nbtn{background:none;border:none;color:rgba(255,255,255,.35);font-family:"Inter",sans-serif;font-size:12px;font-weight:500;padding:10px 14px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;transition:color .15s;display:flex;align-items:center;gap:6px}
-.nbtn:hover{color:rgba(255,255,255,.65)}.nbtn.active{color:var(--txt);border-bottom-color:#79C0FF}
-.npill{display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);border-radius:10px;font-size:10px;font-weight:600;min-width:18px;height:16px;padding:0 5px}
-.npill.red{background:rgba(248,81,73,.25)}.npill.amb{background:rgba(210,153,34,.25)}
-.page{display:none}.page.active{display:block}
-.pi{max-width:1440px;margin:0 auto;padding:24px 32px 40px}
-.ptitle{font-size:18px;font-weight:700;letter-spacing:-.3px;margin-bottom:3px;color:var(--txt)}.pdesc{font-size:12.5px;color:var(--mut);margin-bottom:20px}
-.fbar{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:13px 18px;display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;box-shadow:var(--sh)}
-.flbl{font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
-.fsep{width:1px;height:20px;background:var(--bdr)}.fg{display:flex;align-items:center;gap:8px}.fg label{font-size:12px;color:var(--mut);font-weight:500}
-select.fsel{background:var(--surf2);border:1px solid var(--bdr);border-radius:5px;color:var(--txt2);font-family:"Inter",sans-serif;font-size:12.5px;font-weight:500;padding:6px 10px;cursor:pointer;outline:none;min-width:160px}
-select.fsel:focus{border-color:#388BFD}.freset{background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--mut);font-family:"Inter",sans-serif;font-size:12px;font-weight:500;padding:6px 12px;cursor:pointer}
-.freset:hover{background:var(--surf2)}.fcnt{font-size:12px;color:var(--mut);font-family:"IBM Plex Mono",monospace}
-.csv-btn{background:#238636;color:#fff;border:none;border-radius:5px;font-family:"Inter",sans-serif;font-size:12px;font-weight:600;padding:6px 14px;cursor:pointer;margin-left:auto}
+.nbtn{background:none;border:none;color:rgba(255,255,255,.42);font-family:"Inter",sans-serif;font-size:12.5px;font-weight:500;padding:11px 14px;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;transition:color .15s,border-color .15s;display:flex;align-items:center;gap:7px}
+.nbtn:hover{color:rgba(255,255,255,.75)}
+.nbtn.active{color:var(--txt);border-bottom-color:var(--accent)}
+.npill{display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);border-radius:10px;font-size:10px;font-weight:600;min-width:20px;height:17px;padding:0 6px}
+.npill.red{background:rgba(248,81,73,.22);color:#F85149}
+.npill.amb{background:rgba(210,153,34,.22);color:#D29922}
+.npill.blu{background:rgba(56,139,253,.22);color:#79C0FF}
+
+/* PAGE */
+.page{display:none;animation:fade .15s ease}
+.page.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+.pi{max-width:1480px;margin:0 auto;padding:26px 32px 48px}
+.ptitle{font-size:20px;font-weight:700;letter-spacing:-.4px;margin-bottom:4px;color:var(--txt)}
+.pdesc{font-size:13px;color:var(--mut);margin-bottom:22px;max-width:780px;line-height:1.55}
+
+/* FILTER BAR */
+.fbar{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:13px 18px;display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap;box-shadow:var(--sh)}
+.flbl{font-size:10.5px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.07em}
+.fsep{width:1px;height:22px;background:var(--bdr)}
+.fg{display:flex;align-items:center;gap:8px}
+.fg label{font-size:11.5px;color:var(--mut);font-weight:500}
+select.fsel,input.fin{background:var(--surf2);border:1px solid var(--bdr);border-radius:6px;color:var(--txt2);font-family:"Inter",sans-serif;font-size:12.5px;font-weight:500;padding:7px 11px;cursor:pointer;outline:none;min-width:170px;transition:border-color .15s}
+input.fin{min-width:200px;cursor:text}
+select.fsel:focus,input.fin:focus{border-color:var(--accent)}
+.freset{background:none;border:1px solid var(--bdr);border-radius:6px;color:var(--mut);font-family:"Inter",sans-serif;font-size:11.5px;font-weight:500;padding:7px 13px;cursor:pointer;transition:all .15s}
+.freset:hover{background:var(--surf2);color:var(--txt2)}
+.fcnt{font-size:11.5px;color:var(--mut);font-family:"IBM Plex Mono",monospace;font-weight:500}
+.fcnt b{color:var(--txt);font-weight:700}
+.csv-btn{background:#238636;color:#fff;border:none;border-radius:6px;font-family:"Inter",sans-serif;font-size:11.5px;font-weight:600;padding:7px 14px;cursor:pointer;margin-left:auto;display:flex;align-items:center;gap:6px;transition:background .15s}
 .csv-btn:hover{background:#2EA043}
-.kgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:12px;margin-bottom:24px}
-.kcard{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh);position:relative;overflow:hidden}
+
+/* KPI CARDS */
+.kgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:13px;margin-bottom:26px}
+.kcard{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:17px 18px;box-shadow:var(--sh);position:relative;overflow:hidden;transition:transform .15s,border-color .15s}
+.kcard:hover{transform:translateY(-1px);border-color:var(--bdr2)}
 .kcard::after{content:"";position:absolute;top:0;left:0;right:0;height:3px;border-radius:8px 8px 0 0}
-.kc-brand::after{background:#388BFD}.kc-green::after{background:var(--grn)}.kc-red::after{background:var(--red)}.kc-amber::after{background:var(--amb)}.kc-blue::after{background:var(--blu)}
-.klbl{font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
-.kval{font-size:24px;font-weight:700;letter-spacing:-.5px;line-height:1;margin-bottom:4px}
+.kc-brand::after{background:linear-gradient(90deg,#388BFD,#2563EB)}
+.kc-green::after{background:linear-gradient(90deg,#3FB950,#1A7431)}
+.kc-red::after{background:linear-gradient(90deg,#F85149,#DA3633)}
+.kc-amber::after{background:linear-gradient(90deg,#D29922,#9E6A03)}
+.kc-blue::after{background:linear-gradient(90deg,#79C0FF,#388BFD)}
+.klbl{font-size:10.5px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.07em;margin-bottom:9px}
+.kval{font-size:25px;font-weight:700;letter-spacing:-.6px;line-height:1;margin-bottom:5px}
 .kv-brand{color:#79C0FF}.kv-green{color:var(--grn)}.kv-red{color:var(--red)}.kv-amber{color:var(--amb)}.kv-blue{color:var(--blu)}
 .ksub{font-size:11.5px;color:var(--mut)}
-.crow{display:grid;gap:16px;margin-bottom:20px}.c1{grid-template-columns:1fr}.c21{grid-template-columns:2fr 1fr}
+
+/* CHARTS */
+.crow{display:grid;gap:18px;margin-bottom:22px}
+.c1{grid-template-columns:1fr}
+.c21{grid-template-columns:2fr 1fr}
+.c11{grid-template-columns:1fr 1fr}
 .cbox{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:20px;box-shadow:var(--sh)}
-.chead{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-.ctitle{font-size:13px;font-weight:600;color:var(--txt)}.cmeta{font-size:11px;color:var(--mut)}
-.ch{position:relative}.ch260{height:260px}
-.tcard{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;margin-bottom:20px}
-.thd{padding:13px 18px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;background:var(--surf2)}
-.ttitle{font-size:13px;font-weight:600;color:var(--txt)}.tinfo{display:flex;align-items:center;gap:10px}
-.tsc{overflow-x:auto}.tmh{max-height:520px;overflow-y:auto}
+.chead{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:8px}
+.ctitle{font-size:13.5px;font-weight:600;color:var(--txt)}
+.cmeta{font-size:11px;color:var(--mut)}
+.ch{position:relative}.ch260{height:280px}.ch320{height:340px}
+
+/* TABLE */
+.tcard{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;margin-bottom:22px}
+.thd{padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;background:var(--surf2);flex-wrap:wrap;gap:8px}
+.ttitle{font-size:13.5px;font-weight:600;color:var(--txt)}
+.tinfo{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tsc{overflow-x:auto}.tmh{max-height:600px;overflow-y:auto}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
-thead tr{background:var(--surf2);position:sticky;top:0;z-index:1}
-th{text-align:left;padding:9px 12px;font-size:11px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;border-bottom:1px solid var(--bdr)}
-tbody tr{border-bottom:1px solid var(--bdr);transition:background .1s}tbody tr:last-child{border-bottom:none}tbody tr:hover{background:#21262D}
+thead tr{background:var(--surf2);position:sticky;top:0;z-index:2}
+th{text-align:left;padding:10px 12px;font-size:10.5px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;border-bottom:1px solid var(--bdr);user-select:none}
+th.srt{cursor:pointer;transition:color .1s}
+th.srt:hover{color:var(--txt2)}
+th.srt::after{content:" ⇅";opacity:.3;font-size:9px}
+th.srt.asc::after{content:" ▲";opacity:1;color:var(--accent)}
+th.srt.desc::after{content:" ▼";opacity:1;color:var(--accent)}
+tbody tr{border-bottom:1px solid var(--bdr);transition:background .08s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:#21262D}
+tbody tr.hl{background:rgba(56,139,253,.08);box-shadow:inset 3px 0 0 var(--accent)}
 td{padding:9px 12px;color:var(--txt2);vertical-align:middle}
-.tn{font-weight:500;color:var(--txt);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
-.bc{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--mut)}
-.mono{font-family:"IBM Plex Mono",monospace;font-size:12px}.tr{text-align:right;font-family:"IBM Plex Mono",monospace;font-size:12px}
-.c-red{color:var(--red)}.c-amber{color:var(--amb)}.c-green{color:var(--grn)}.c-blue{color:var(--blu)}.muted{color:var(--mut)}.fw6{font-weight:600}.bold-green{color:var(--grn);font-weight:700}
-.sup{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
-.b-red{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--red-t);color:var(--red);border:1px solid var(--red-b);white-space:nowrap}
-.b-amber{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--amb-t);color:var(--amb);border:1px solid var(--amb-b);white-space:nowrap}
-.b-green{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--grn-t);color:var(--grn);border:1px solid var(--grn-b);white-space:nowrap}
-.b-blue{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--blu-t);color:var(--blu);border:1px solid var(--blu-b);white-space:nowrap}
-.b-slate{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--surf2);color:var(--slt);border:1px solid var(--bdr);white-space:nowrap}
-.b-brand{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:4px;background:var(--brand-t);color:#79C0FF;border:1px solid #1B4B7A;white-space:nowrap}
-.arow{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:20px}
-.abox{border-radius:var(--r);padding:14px 16px;border:1px solid}
-.abox.red{background:var(--red-t);border-color:var(--red-b)}.abox.amb{background:var(--amb-t);border-color:var(--amb-b)}
-.abox.grn{background:var(--grn-t);border-color:var(--grn-b)}.abox.blu{background:var(--blu-t);border-color:var(--blu-b)}
-.ah{display:flex;align-items:flex-start;gap:8px;margin-bottom:5px}.ai{font-size:14px;flex-shrink:0;font-style:normal}
-.at{font-size:12.5px;font-weight:600;color:var(--txt)}.ab{font-size:12px;color:var(--txt2);line-height:1.5;padding-left:22px}
-.strip{background:#161B22;border:1px solid #30363D;color:var(--txt);border-radius:var(--r);padding:12px 20px;display:flex;align-items:center;gap:24px;margin-bottom:20px;flex-wrap:wrap}
-.si{display:flex;flex-direction:column;gap:1px}.sl{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
-.sv{font-size:16px;font-weight:700;font-family:"IBM Plex Mono",monospace;letter-spacing:-.5px}
-.sv.red{color:var(--red)}.sv.amb{color:var(--amb)}.sv.grn{color:var(--grn)}.ss{width:1px;height:32px;background:rgba(255,255,255,.1)}
-.rank-list{display:flex;flex-direction:column;gap:7px}
-.rank-row{display:grid;grid-template-columns:28px 1fr 120px 70px;align-items:center;gap:10px}
-.rn{font-size:11px;color:var(--mut);font-weight:600;text-align:right}
+.tn{font-weight:500;color:var(--txt);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.bc{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--mut);margin-top:1px}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:12px}
+.tr{text-align:right;font-family:"IBM Plex Mono",monospace;font-size:12px;white-space:nowrap}
+.c-red{color:var(--red)}.c-amber{color:var(--amb)}.c-green{color:var(--grn)}.c-blue{color:var(--blu)}
+.muted{color:var(--mut)}.fw6{font-weight:600}
+.bold-green{color:var(--grn);font-weight:700}
+.sup{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+
+/* BADGES */
+.b-red,.b-amber,.b-green,.b-blue,.b-slate,.b-brand,.b-pur{display:inline-flex;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:4px;white-space:nowrap;letter-spacing:.01em}
+.b-red{background:var(--red-t);color:var(--red);border:1px solid var(--red-b)}
+.b-amber{background:var(--amb-t);color:var(--amb);border:1px solid var(--amb-b)}
+.b-green{background:var(--grn-t);color:var(--grn);border:1px solid var(--grn-b)}
+.b-blue{background:var(--blu-t);color:var(--blu);border:1px solid var(--blu-b)}
+.b-slate{background:var(--surf2);color:var(--slt);border:1px solid var(--bdr)}
+.b-brand{background:var(--brand-t);color:#79C0FF;border:1px solid #1B4B7A}
+.b-pur{background:var(--pur-t);color:var(--pur);border:1px solid var(--pur-b)}
+
+/* ALERT BOXES */
+.arow{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:13px;margin-bottom:22px}
+.abox{border-radius:var(--r);padding:15px 17px;border:1px solid;backdrop-filter:blur(4px)}
+.abox.red{background:var(--red-t);border-color:var(--red-b)}
+.abox.amb{background:var(--amb-t);border-color:var(--amb-b)}
+.abox.grn{background:var(--grn-t);border-color:var(--grn-b)}
+.abox.blu{background:var(--blu-t);border-color:var(--blu-b)}
+.ah{display:flex;align-items:flex-start;gap:9px;margin-bottom:6px}
+.ai{font-size:14px;flex-shrink:0;font-style:normal;font-weight:700;min-width:18px}
+.at{font-size:12.5px;font-weight:600;color:var(--txt);line-height:1.35}
+.ab{font-size:12px;color:var(--txt2);line-height:1.55;padding-left:27px}
+
+/* STAT STRIP */
+.strip{background:linear-gradient(180deg,#161B22 0%,#13181F 100%);border:1px solid #30363D;color:var(--txt);border-radius:var(--r);padding:14px 22px;display:flex;align-items:center;gap:26px;margin-bottom:22px;flex-wrap:wrap}
+.si{display:flex;flex-direction:column;gap:2px}
+.sl{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+.sv{font-size:17px;font-weight:700;font-family:"IBM Plex Mono",monospace;letter-spacing:-.5px;line-height:1}
+.sv.red{color:var(--red)}.sv.amb{color:var(--amb)}.sv.grn{color:var(--grn)}.sv.blu{color:var(--blu)}
+.ss{width:1px;height:34px;background:rgba(255,255,255,.1)}
+
+/* RANK LIST */
+.rank-list{display:flex;flex-direction:column;gap:8px}
+.rank-row{display:grid;grid-template-columns:30px 1fr 140px 80px;align-items:center;gap:11px}
+.rn{font-size:11px;color:var(--mut);font-weight:700;text-align:right;font-family:"IBM Plex Mono",monospace}
 .rnm{font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--txt2)}
-.rb{background:var(--surf2);border-radius:3px;height:8px}.rf{height:100%;border-radius:3px;background:#388BFD}
-.rv{font-size:11.5px;font-family:"IBM Plex Mono",monospace;text-align:right;color:var(--mut)}
-.footer{text-align:center;padding:20px 32px;border-top:1px solid var(--bdr);font-size:11.5px;color:var(--mut)}
-.age-fresh{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(63,185,80,.12);color:#3FB950;border:1px solid rgba(63,185,80,.25);white-space:nowrap}
-.age-ok{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(88,166,255,.12);color:#79C0FF;border:1px solid rgba(88,166,255,.25);white-space:nowrap}
-.age-warn{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(210,153,34,.12);color:#D29922;border:1px solid rgba(210,153,34,.25);white-space:nowrap}
-.age-alert{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(248,81,73,.12);color:#F85149;border:1px solid rgba(248,81,73,.25);white-space:nowrap}
-.age-old{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(139,73,234,.12);color:#A371F7;border:1px solid rgba(139,73,234,.25);white-space:nowrap}
-@media(max-width:900px){.pi{padding:16px}.hdr,.nav{padding-left:16px;padding-right:16px}.crow.c21{grid-template-columns:1fr}.kgrid{grid-template-columns:repeat(2,1fr)}}"""
+.rb{background:var(--surf2);border-radius:3px;height:9px;overflow:hidden}
+.rf{height:100%;border-radius:3px;background:linear-gradient(90deg,#2563EB,#388BFD);transition:width .3s}
+.rv{font-size:11.5px;font-family:"IBM Plex Mono",monospace;text-align:right;color:var(--mut);font-weight:500}
 
-    JS = f"""
-var CATS={json.dumps(cats,separators=(',',':'))};
-var CATCLS={json.dumps(catcls,separators=(',',':'))};
-var TOP_DATA={top_json};
-var ZERO_DATA={zero_json};
-var NEG_DATA={neg_json};
-var OOS_DATA={oos_json};
-var RISK_DATA={risk_json};
-var UW_DATA={uw_json};
-var PRE_DATA={pre_json};
-var ML={json.dumps(ml)};var MV={json.dumps(mv)};var MC={json.dumps(mc)};
-var CL={json.dumps(cl)};var CV={json.dumps(cv)};var CC={json.dumps(cat_c[:len(cl)])};
-var HV={json.dumps(hv)};
-var OOS_LABELS={json.dumps(oos_h)};
-var K={json.dumps(K)};
+/* AGEING BADGES */
+.age-fresh,.age-ok,.age-warn,.age-alert,.age-old{display:inline-flex;font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;white-space:nowrap}
+.age-fresh{background:rgba(63,185,80,.13);color:#3FB950;border:1px solid rgba(63,185,80,.28)}
+.age-ok{background:rgba(88,166,255,.13);color:#79C0FF;border:1px solid rgba(88,166,255,.28)}
+.age-warn{background:rgba(210,153,34,.13);color:#D29922;border:1px solid rgba(210,153,34,.28)}
+.age-alert{background:rgba(248,81,73,.13);color:#F85149;border:1px solid rgba(248,81,73,.28)}
+.age-old{background:rgba(163,113,247,.13);color:#A371F7;border:1px solid rgba(163,113,247,.28)}
 
-function SP(id){{
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.nbtn').forEach(b=>b.classList.remove('active'));
-  var pg=document.getElementById('pg-'+id),nb=document.getElementById('nb-'+id);
-  if(pg)pg.classList.add('active');if(nb)nb.classList.add('active');
-  window.scrollTo(0,0);
-  if(id==='ov'){{setTimeout(function(){{
-    if(window.Chart){{Chart.instances&&Object.values(Chart.instances).forEach(function(c){{c.resize&&c.resize();}});}}
-  }},50);}}
-}}
-var CF={{family:"'Inter',sans-serif",size:11,color:'#8B949E'}};
-Chart.defaults.font=CF;Chart.defaults.color='#8B949E';
-function fmtT(v){{return v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':Number(v).toLocaleString('en');}}
-function fmtN(v,d=1){{v=parseFloat(v)||0;if(Math.abs(v)>=1e6)return(v/1e6).toFixed(d)+'M';if(Math.abs(v)>=1e3)return(v/1e3).toFixed(d)+'K';return v.toLocaleString('en',{{maximumFractionDigits:d}});}}
-function esc(s){{return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}}
-function ageBadge(r){{
-  var b=r.ageb||'';
-  if(b==='0–30 days')     return '<span class="age-fresh">'+b+'</span>';
-  if(b==='31–90 days')    return '<span class="age-ok">'+b+'</span>';
-  if(b==='91–180 days')   return '<span class="age-warn">'+b+'</span>';
-  if(b==='181–360 days')  return '<span class="age-alert">'+b+'</span>';
-  if(b==='360+ days')          return '<span class="age-old">'+b+'</span>';
-  return '';
-}}
+/* PAGINATION */
+.pgn{display:flex;align-items:center;gap:8px;padding:13px 18px;background:var(--surf2);border-top:1px solid var(--bdr);font-size:12px;color:var(--mut);justify-content:space-between;flex-wrap:wrap}
+.pgn-info{font-family:"IBM Plex Mono",monospace}
+.pgn-ctl{display:flex;align-items:center;gap:6px}
+.pgn-btn{background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--txt2);padding:5px 11px;font-size:11.5px;cursor:pointer;font-family:"Inter",sans-serif;font-weight:500;transition:all .15s;min-width:34px}
+.pgn-btn:hover:not(:disabled){background:var(--surf3);border-color:var(--bdr2)}
+.pgn-btn:disabled{opacity:.4;cursor:not-allowed}
+.pgn-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.pgn-sel{background:var(--surf);border:1px solid var(--bdr);border-radius:5px;color:var(--txt2);padding:5px 10px;font-size:11.5px;font-family:"Inter",sans-serif;cursor:pointer}
 
-function initCharts(){{
-  if(ML&&ML.length>0&&document.getElementById('chM')){{
-    new Chart(document.getElementById('chM'),{{type:'bar',data:{{labels:ML,datasets:[{{data:MV,backgroundColor:MC,borderRadius:4,borderSkipped:false}}]}},options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.y).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{display:false}},ticks:{{font:CF}}}},y:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}}}}}}}}}});
-  }}
-  if(CL&&CL.length>0&&document.getElementById('chC')){{
-    new Chart(document.getElementById('chC'),{{type:'bar',data:{{labels:CL,datasets:[{{data:CV,backgroundColor:CC,borderRadius:4}}]}},options:{{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{{legend:{{display:false}},tooltip:{{callbacks:{{label:c=>' '+Number(c.parsed.x).toLocaleString()+' units'}}}}}},scales:{{x:{{grid:{{color:'#21262D'}},ticks:{{font:CF,callback:v=>fmtT(v)}},border:{{display:false}}}},y:{{grid:{{display:false}},ticks:{{font:CF}}}}}}}}}}}});
-  }}
-  if(document.getElementById('chH')){{
-    new Chart(document.getElementById('chH'),{{type:'doughnut',data:{{labels:['Healthy','Zero Sale','Negative','OOS','High Risk'],datasets:[{{data:HV,backgroundColor:['#3FB950','#D29922','#F85149','#A371F7','#388BFD'],borderWidth:2,borderColor:'#161B22'}}]}},options:{{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{{legend:{{position:'bottom',labels:{{font:{{family:"'Inter'",size:10}},padding:8,boxWidth:10,color:'#8B949E'}}}}}}}}}}}}}});
-  }}
-}}
-if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',initCharts);}}else{{setTimeout(initCharts,0);}}
+/* FOOTER */
+.footer{text-align:center;padding:22px 32px;border-top:1px solid var(--bdr);font-size:11.5px;color:var(--mut);margin-top:30px}
+.footer a{color:var(--blu);text-decoration:none}
 
-function filterData(data,cat,cls){{
-  if((!cat||cat==='All Categories')&&(!cls||cls==='All Classes'))return data;
-  return data.filter(r=>{{
-    var cm=!cat||cat==='All Categories'||r.cat===cat;
-    var clm=!cls||cls==='All Classes'||r.cls===cls;
-    return cm&&clm;
-  }});
-}}
-function updClsOpts(selId,cat){{
-  var el=document.getElementById(selId);if(!el)return;
-  var list=(cat&&cat!=='All Categories'&&CATCLS[cat])||[];
-  el.innerHTML='<option value="All Classes">All Classes</option>'+list.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
-}}
-function fmtS(n){{n=parseFloat(n)||0;if(Math.abs(n)>=1e6)return(n/1e6).toFixed(1)+'M';if(Math.abs(n)>=1e3)return(n/1e3).toFixed(1)+'K';return n.toLocaleString('en',{{maximumFractionDigits:0}});}}
-function mkStrip(id,items){{document.getElementById(id).innerHTML='<div class="strip">'+items.map((it,i)=>(i?'<div class="ss"></div>':'')+'<div class="si"><div class="sl">'+it[0]+'</div><div class="sv '+it[2]+'">'+it[1]+'</div></div>').join('')+'</div>';}}
-function downloadCSV(data,headers,filename){{
-  var rows=[headers.join(',')].concat(data.map(r=>headers.map(h=>{{var v=r[h]===undefined?'':r[h];return '"'+String(v).replace(/"/g,'""')+'"';}}).join(',')));
-  var blob=new Blob([rows.join('\\n')],{{type:'text/csv;charset=utf-8;'}});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');a.href=url;a.download=filename;a.click();URL.revokeObjectURL(url);
-}}
+/* RESPONSIVE */
+@media(max-width:1100px){.crow.c21,.crow.c11{grid-template-columns:1fr}}
+@media(max-width:900px){.pi{padding:18px}.hdr,.nav{padding-left:16px;padding-right:16px}.kgrid{grid-template-columns:repeat(2,1fr)}.gs-wrap{margin:0 8px}.hmeta{display:none}}
+@media(max-width:640px){.kgrid{grid-template-columns:1fr}.fbar{padding:10px}}
 
-function rowTop(r,i){{var mc=r.mg<10?'c-red':(r.mg>30?'c-green fw6':'');return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.brand||'—')+'</td><td class="tr bold-green">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td></tr>';}}
-function rowZero(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+ageBadge(r)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowNeg(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr c-green">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+ageBadge(r)+'</td></tr>';}}
-function rowOOS(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-green fw6">'+fmtN(r.l3,0)+'</td><td class="tr">'+fmtN(r.m0,1)+'</td><td class="tr">'+fmtN(r.m1,1)+'</td><td class="tr">'+fmtN(r.m2,1)+'</td><td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td><td class="tr">'+fmtN(r.ts,0)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowRisk(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+fmtN(r.stock,1)+'</td><td class="tr c-red">'+fmtN(r.ts,0)+'</td><td class="tr">'+(r.l3||0).toFixed(0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+r.mg.toFixed(1)+'%</td><td>'+esc(r.lpd||'—')+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+ageBadge(r)+'</td></tr>';}}
-function rowUW(r,i){{return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr">'+(r.lpq||'—')+'</td><td>'+esc(r.lpd||'—')+'</td><td>'+ageBadge(r)+'</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-function rowPre(r,i){{var mc=r.mg<10?'c-red':(r.mg>30?'c-green fw6':'');var tsBadge=r.ts===0?'<span class="b-red">Zero Sale</span>':'<span class="b-green">'+fmtN(r.ts,0)+'</span>';return '<tr><td class="mono">'+(i+1)+'</td><td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td><td><span class="b-slate">'+esc(r.cat)+'</span></td><td><span class="b-brand">'+esc(r.cls)+'</span></td><td class="muted">'+esc(r.grp||'—')+'</td><td class="muted">'+esc(r.brand||'—')+'</td><td class="tr c-amber">'+fmtN(r.stock,1)+'</td><td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td><td>'+tsBadge+'</td><td class="tr">'+fmtN(r.l3,0)+'</td><td class="tr">'+r.cost.toFixed(2)+'</td><td class="tr">'+r.sell.toFixed(2)+'</td><td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td><td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';}}
-
-function renderTable(tbodyId,data,rowFn){{document.getElementById(tbodyId).innerHTML=data.map((r,i)=>rowFn(r,i)).join('');}}
-function renderRank(id,data){{var mx=data.length?data[0].ts:1;document.getElementById(id).innerHTML=data.slice(0,10).map((r,i)=>'<div class="rank-row"><div class="rn">'+(i+1)+'</div><div class="rnm" title="'+esc(r.n)+'">'+esc(r.n)+'</div><div class="rb"><div class="rf" style="width:'+(r.ts/mx*100).toFixed(1)+'%"></div></div><div class="rv">'+fmtN(r.ts,0)+'</div></div>').join('');}}
-
-var _state={{}};
-function initSection(id,allData,rowFn,stripCfg,csvHeaders){{
-  var catEl=document.getElementById(id+'-cat'),clsEl=document.getElementById(id+'-cls');
-  function run(){{
-    var cat=catEl?catEl.value:'All Categories',cls=clsEl?clsEl.value:'All Classes';
-    var d=filterData(allData,cat,cls);
-    renderTable(id+'-tb',d,rowFn);
-    if(id==='top'){{renderRank('top-rank',d);document.getElementById('top-cnt').textContent='Showing '+d.length+' items';return;}}
-    document.getElementById(id+'-cnt').textContent='Showing '+d.length+' items';
-    if(stripCfg){{
-      var sv=d.reduce((s,r)=>s+(r.sv||0),0);
-      var l3=d.reduce((s,r)=>s+(r.l3||0),0);
-      mkStrip(id+'-strip',stripCfg(d,sv,l3));
-    }}
-    _state[id]=d;
-  }}
-  if(catEl)catEl.addEventListener('change',()=>{{updClsOpts(id+'-cls',catEl.value);run();}});
-  if(clsEl)clsEl.addEventListener('change',run);
-  window[id+'Reset']=()=>{{if(catEl)catEl.value='All Categories';updClsOpts(id+'-cls','All Categories');run();}};
-  window[id+'CSV']=()=>{{var d=_state[id]||allData;downloadCSV(d,csvHeaders,id+'_export.csv');}};
-  if(clsEl)updClsOpts(id+'-cls','All Categories');
-  _state[id]=allData;
-  run();
-}}
-
-function preStripFn(d,sv){{var zi=d.filter(function(r){{return r.ts<=0;}});var si=d.filter(function(r){{return r.ts>0;}});var zsv=zi.reduce(function(s,r){{return s+(r.sv||0);}},0);var ssv=si.reduce(function(s,r){{return s+(r.sv||0);}},0);return[['Total Shown',fmtS(d.length),'amb'],['Total Stock Value','AED '+fmtS(sv),'amb'],['Zero Sale — '+fmtS(zi.length),'AED '+fmtS(zsv),'red'],['Still Selling — '+fmtS(si.length),'AED '+fmtS(ssv),'grn']];}}
-function initAll(){{
-  initSection('top',TOP_DATA,rowTop,null,['bc','n','cat','cls','brand','ts','l3','stock','sv','cost','sell','mg']);
-initSection('zero',ZERO_DATA,rowZero,
-  (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value at Risk','AED '+fmtS(sv),'amb'],['Avg / Item',d.length?'AED '+fmtS(sv/d.length):'—',''],['Total Zero-Sale',fmtS(K.zero_count),'red']],
-  ['bc','n','cat','cls','grp','sup','stock','sv','cost','sell','lpd','lpq']);
-initSection('neg',NEG_DATA,rowNeg,
-  (d,sv)=>[['Items Shown',fmtS(d.length),''],['Neg. Value Exposure','AED '+fmtS(Math.abs(sv)),'red'],['Total Negative',fmtS(K.neg_count),'red'],['Priority','CRITICAL','amb']],
-  ['bc','n','cat','cls','cost','sell','stock','sv','ts','l3','lpd','lpq']);
-initSection('oos',OOS_DATA,rowOOS,
-  (d,sv,l3)=>[['OOS Items',fmtS(d.length),'red'],['Last 3M Sales',fmtS(l3)+' units','grn'],['Total OOS Portfolio',fmtS(K.oos_count),'red'],['Revenue Risk','HIGH','amb']],
-  ['bc','n','cat','cls','sup','sell','stock','ts','l3','m0','m1','m2']);
-initSection('risk',RISK_DATA,rowRisk,
-  (d,sv)=>[['Items Shown',fmtS(d.length),''],['Value at Risk','AED '+fmtS(sv),'amb'],['Portfolio Exposure','AED '+fmtS(K.risk_sv),'red'],['Total High Risk',fmtS(K.risk_count),'amb']],
-  ['bc','n','cat','cls','cost','sell','stock','sv','ts','mg','l3','lpd','lpq']);
-initSection('uw',UW_DATA,rowUW,
-  (d,sv)=>[['Items Shown',fmtS(d.length),''],['Stock Value','AED '+fmtS(sv),'red'],['Portfolio Total','AED '+fmtS(K.uw_sv),'red'],['Total Unwanted',fmtS(K.uw_count),'red']],
-  ['bc','n','cat','cls','cost','sell','stock','sv','lpq','lpd','sup']);
-initSection('pre',PRE_DATA,rowPre,preStripFn,['bc','n','cat','cls','grp','brand','sup','stock','sv','ts','l3','cost','sell','mg']);
-  SP('ov');
-}}
-if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',initAll);}}else{{initAll();}}
+/* PRINT */
+@media print{.hdr,.nav,.fbar,.csv-btn,.pgn,.gs-wrap{display:none!important}.page{display:block!important}.tmh{max-height:none!important;overflow:visible!important}}
 """
 
+    # ── JS — built using % substitution, NOT f-string {{}} doubling ──────────
+    import json as _json
+    _data_blob = {
+        'CATS':   cats,
+        'CATCLS': catcls,
+        'TOP':    _json.loads(top_json),
+        'ZERO':   _json.loads(zero_json),
+        'NEG':    _json.loads(neg_json),
+        'OOS':    _json.loads(oos_json),
+        'RISK':   _json.loads(risk_json),
+        'UW':     _json.loads(uw_json),
+        'PRE':    _json.loads(pre_json),
+        'ML':     ml,
+        'MV':     mv,
+        'CL':     cl,
+        'CV':     cv,
+        'HV':     hv,
+        'OOS_LABELS': oos_h,
+        'K':      K,
+        'TOP_SUP': top_sup,
+    }
+    DATA_JSON = _json.dumps(_data_blob, separators=(',', ':'))
+
+    # JS is a plain string — placeholders are %(name)s style, only one substitution at the end.
+    # No f-string brace-doubling. Cannot mismatch.
+    JS = r"""
+// ═══ AL MADINA INVENTORY DASHBOARD — Client-side runtime ═══
+
+var __D = JSON.parse(document.getElementById('__data__').textContent);
+var CATS = __D.CATS, CATCLS = __D.CATCLS, K = __D.K;
+var DATASETS = {
+  top:  __D.TOP,  zero: __D.ZERO, neg: __D.NEG,
+  oos:  __D.OOS,  risk: __D.RISK, uw:  __D.UW, pre: __D.PRE
+};
+var ML = __D.ML, MV = __D.MV, CL = __D.CL, CV = __D.CV, HV = __D.HV;
+var OOS_LABELS = __D.OOS_LABELS, TOP_SUP = __D.TOP_SUP;
+
+// ─── UTILITIES ───────────────────────────────────────────────────────────
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtN(v,d){ if(d==null) d=1; v=parseFloat(v)||0; var a=Math.abs(v); if(a>=1e6) return (v/1e6).toFixed(d)+'M'; if(a>=1e3) return (v/1e3).toFixed(d)+'K'; return v.toLocaleString('en',{maximumFractionDigits:d}); }
+function fmtT(v){ v=parseFloat(v)||0; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; if(v>=1e3) return (v/1e3).toFixed(0)+'K'; return Number(v).toLocaleString('en'); }
+function fmtS(n){ n=parseFloat(n)||0; var a=Math.abs(n); if(a>=1e6) return (n/1e6).toFixed(1)+'M'; if(a>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toLocaleString('en',{maximumFractionDigits:0}); }
+function ageBadge(r){
+  var b = r.ageb || '';
+  if(b==='0–30 days')    return '<span class="age-fresh">'+b+'</span>';
+  if(b==='31–90 days')   return '<span class="age-ok">'+b+'</span>';
+  if(b==='91–180 days')  return '<span class="age-warn">'+b+'</span>';
+  if(b==='181–360 days') return '<span class="age-alert">'+b+'</span>';
+  if(b==='360+ days')    return '<span class="age-old">'+b+'</span>';
+  return '<span class="muted">—</span>';
+}
+
+// ─── PAGE SWITCHING ──────────────────────────────────────────────────────
+function SP(id){
+  document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.nbtn').forEach(function(b){ b.classList.remove('active'); });
+  var pg = document.getElementById('pg-'+id);
+  var nb = document.getElementById('nb-'+id);
+  if(pg) pg.classList.add('active');
+  if(nb) nb.classList.add('active');
+  window.scrollTo(0,0);
+  // Resize charts that may have been hidden
+  if(id==='ov'){
+    setTimeout(function(){
+      if(window.Chart && Chart.instances){
+        Object.values(Chart.instances).forEach(function(c){ if(c.resize) c.resize(); });
+      }
+    }, 80);
+  }
+}
+window.SP = SP;
+
+// ─── CHARTS ──────────────────────────────────────────────────────────────
+function initCharts(){
+  if(!window.Chart) return;
+  var CF = { family: "'Inter',sans-serif", size: 11, weight: '500' };
+  Chart.defaults.font = CF;
+  Chart.defaults.color = '#8B949E';
+  Chart.defaults.borderColor = '#21262D';
+
+  var mc = []; for(var i=0;i<ML.length;i++) mc.push(i===ML.length-1 ? '#3B82F6' : '#1e3a5f');
+
+  if(ML.length && document.getElementById('chM')){
+    new Chart(document.getElementById('chM'), {
+      type:'bar',
+      data:{ labels: ML, datasets:[{ data: MV, backgroundColor: mc, borderRadius: 5, borderSkipped: false }] },
+      options:{
+        responsive: true, maintainAspectRatio: false,
+        plugins:{
+          legend:{ display: false },
+          tooltip:{ backgroundColor:'#161B22', borderColor:'#30363D', borderWidth:1, titleColor:'#E6EDF3', bodyColor:'#C9D1D9', padding:10, callbacks:{ label: function(c){ return ' '+Number(c.parsed.y).toLocaleString()+' units'; } } }
+        },
+        scales:{
+          x:{ grid:{ display: false }, ticks:{ color:'#8B949E' } },
+          y:{ grid:{ color:'#21262D' }, ticks:{ color:'#8B949E', callback: function(v){ return fmtT(v); } }, border:{ display: false } }
+        }
+      }
+    });
+  }
+  if(CL.length && document.getElementById('chC')){
+    var cc = ['#1B2B4B','#1e3a5f','#1e40af','#1d4ed8','#2563eb','#3b82f6','#60a5fa','#0f766e','#0d9488','#14b8a6'];
+    new Chart(document.getElementById('chC'), {
+      type:'bar',
+      data:{ labels: CL, datasets:[{ data: CV, backgroundColor: cc.slice(0, CL.length), borderRadius: 5 }] },
+      options:{
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins:{
+          legend:{ display: false },
+          tooltip:{ backgroundColor:'#161B22', borderColor:'#30363D', borderWidth:1, padding:10, callbacks:{ label: function(c){ return ' '+Number(c.parsed.x).toLocaleString()+' units'; } } }
+        },
+        scales:{
+          x:{ grid:{ color:'#21262D' }, ticks:{ color:'#8B949E', callback: function(v){ return fmtT(v); } }, border:{ display: false } },
+          y:{ grid:{ display: false }, ticks:{ color:'#8B949E' } }
+        }
+      }
+    });
+  }
+  if(document.getElementById('chH')){
+    new Chart(document.getElementById('chH'), {
+      type:'doughnut',
+      data:{ labels:['Healthy','Zero Sale','Negative','OOS','High Risk'], datasets:[{ data: HV, backgroundColor:['#3FB950','#D29922','#F85149','#A371F7','#388BFD'], borderWidth: 2, borderColor:'#161B22' }] },
+      options:{
+        responsive: true, maintainAspectRatio: false, cutout: '64%',
+        plugins:{
+          legend:{ position:'bottom', labels:{ color:'#8B949E', padding:10, boxWidth:10, font:{ size: 11 } } },
+          tooltip:{ backgroundColor:'#161B22', borderColor:'#30363D', borderWidth:1, padding:10 }
+        }
+      }
+    });
+  }
+}
+
+// ─── TABLE ENGINE (filtering + sorting + pagination) ─────────────────────
+var STATE = {};  // per-section state
+
+function ageRank(b){
+  if(b==='0–30 days') return 1; if(b==='31–90 days') return 2;
+  if(b==='91–180 days') return 3; if(b==='181–360 days') return 4;
+  if(b==='360+ days') return 5; return 9;
+}
+
+function applyFilters(secId){
+  var s = STATE[secId];
+  if(!s) return [];
+  var data = s.all;
+  var cat = s.cat, cls = s.cls, q = (s.q||'').toLowerCase().trim();
+  var out = [];
+  for(var i=0; i<data.length; i++){
+    var r = data[i];
+    if(cat && cat!=='All Categories' && r.cat !== cat) continue;
+    if(cls && cls!=='All Classes' && r.cls !== cls) continue;
+    if(q){
+      var hay = ((r.n||'')+' '+(r.bc||'')+' '+(r.sup||'')+' '+(r.brand||'')+' '+(r.grp||'')).toLowerCase();
+      if(hay.indexOf(q) === -1) continue;
+    }
+    out.push(r);
+  }
+  // sort
+  if(s.sortKey){
+    var k = s.sortKey, dir = s.sortDir;
+    out.sort(function(a, b){
+      var va = a[k], vb = b[k];
+      if(k === 'ageb'){ va = ageRank(va); vb = ageRank(vb); }
+      if(typeof va === 'number' && typeof vb === 'number') return dir==='asc' ? va-vb : vb-va;
+      va = String(va==null?'':va).toLowerCase(); vb = String(vb==null?'':vb).toLowerCase();
+      return dir==='asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+  }
+  return out;
+}
+
+function renderSection(secId){
+  var s = STATE[secId];
+  if(!s) return;
+  var d = applyFilters(secId);
+  s.filtered = d;
+
+  // pagination
+  var pageSize = s.pageSize || 50;
+  var totalPages = Math.max(1, Math.ceil(d.length / pageSize));
+  if(s.page > totalPages) s.page = totalPages;
+  if(s.page < 1) s.page = 1;
+  var start = (s.page - 1) * pageSize;
+  var slice = d.slice(start, start + pageSize);
+
+  // render rows
+  var tb = document.getElementById(secId+'-tb');
+  if(tb){
+    var html = '';
+    for(var i=0; i<slice.length; i++){
+      html += s.rowFn(slice[i], start + i);
+    }
+    tb.innerHTML = html || '<tr><td colspan="20" style="padding:30px;text-align:center;color:#8B949E">No items match the current filters.</td></tr>';
+  }
+
+  // counter
+  var cnt = document.getElementById(secId+'-cnt');
+  if(cnt){
+    cnt.innerHTML = 'Showing <b>'+Math.min(start+1, d.length)+'</b>–<b>'+Math.min(start+pageSize, d.length)+'</b> of <b>'+d.length.toLocaleString()+'</b>';
+  }
+  // top10 rank (top section only)
+  if(secId === 'top'){
+    var rk = document.getElementById('top-rank');
+    if(rk){
+      var top10 = d.slice(0, 10);
+      var mx = top10.length ? top10[0].ts : 1;
+      rk.innerHTML = top10.map(function(r,i){
+        return '<div class="rank-row"><div class="rn">'+(i+1)+'</div>'+
+          '<div class="rnm" title="'+esc(r.n)+'">'+esc(r.n)+'</div>'+
+          '<div class="rb"><div class="rf" style="width:'+(r.ts/mx*100).toFixed(1)+'%"></div></div>'+
+          '<div class="rv">'+fmtN(r.ts,0)+'</div></div>';
+      }).join('') || '<div class="muted" style="text-align:center;padding:14px">No items</div>';
+    }
+  }
+  // strip
+  if(s.stripFn){
+    var sv = 0, l3 = 0;
+    for(var j=0; j<d.length; j++){ sv += (d[j].sv||0); l3 += (d[j].l3||0); }
+    var items = s.stripFn(d, sv, l3);
+    var stEl = document.getElementById(secId+'-strip');
+    if(stEl){
+      stEl.innerHTML = '<div class="strip">' + items.map(function(it, i){
+        return (i ? '<div class="ss"></div>' : '') +
+               '<div class="si"><div class="sl">'+it[0]+'</div><div class="sv '+it[2]+'">'+it[1]+'</div></div>';
+      }).join('') + '</div>';
+    }
+  }
+  // pagination UI
+  renderPagination(secId, d.length, pageSize);
+  // sort indicator
+  var thead = document.querySelector('#tbl-'+secId+' thead');
+  if(thead){
+    thead.querySelectorAll('th.srt').forEach(function(th){
+      th.classList.remove('asc','desc');
+      if(th.getAttribute('data-key') === s.sortKey){
+        th.classList.add(s.sortDir === 'asc' ? 'asc' : 'desc');
+      }
+    });
+  }
+}
+
+function renderPagination(secId, total, pageSize){
+  var el = document.getElementById(secId+'-pgn');
+  if(!el) return;
+  var s = STATE[secId];
+  var totalPages = Math.max(1, Math.ceil(total / pageSize));
+  var p = s.page;
+  // build page numbers (compact)
+  var pages = [];
+  var add = function(n){ pages.push(n); };
+  if(totalPages <= 7){
+    for(var i=1; i<=totalPages; i++) add(i);
+  } else {
+    add(1);
+    if(p > 4) add('…');
+    var lo = Math.max(2, p-1), hi = Math.min(totalPages-1, p+1);
+    for(var i=lo; i<=hi; i++) add(i);
+    if(p < totalPages-3) add('…');
+    add(totalPages);
+  }
+  var btns = pages.map(function(n){
+    if(n === '…') return '<span class="pgn-info" style="padding:0 4px">…</span>';
+    return '<button class="pgn-btn'+(n===p?' active':'')+'" onclick="gotoPage(\''+secId+'\','+n+')">'+n+'</button>';
+  }).join('');
+  el.innerHTML =
+    '<div class="pgn-info">Page <b>'+p+'</b> of <b>'+totalPages+'</b></div>'+
+    '<div class="pgn-ctl">'+
+      '<button class="pgn-btn" onclick="gotoPage(\''+secId+'\',1)" '+(p===1?'disabled':'')+'>« First</button>'+
+      '<button class="pgn-btn" onclick="gotoPage(\''+secId+'\','+(p-1)+')" '+(p===1?'disabled':'')+'>‹ Prev</button>'+
+      btns +
+      '<button class="pgn-btn" onclick="gotoPage(\''+secId+'\','+(p+1)+')" '+(p===totalPages?'disabled':'')+'>Next ›</button>'+
+      '<button class="pgn-btn" onclick="gotoPage(\''+secId+'\','+totalPages+')" '+(p===totalPages?'disabled':'')+'>Last »</button>'+
+    '</div>'+
+    '<div class="pgn-ctl"><span style="font-size:11.5px">Rows:</span>'+
+      '<select class="pgn-sel" onchange="changePageSize(\''+secId+'\',this.value)">'+
+        ['25','50','100','200','500'].map(function(n){ return '<option'+(parseInt(n)===pageSize?' selected':'')+'>'+n+'</option>'; }).join('')+
+      '</select></div>';
+}
+function gotoPage(secId, n){ if(STATE[secId]){ STATE[secId].page = n; renderSection(secId); var pg=document.querySelector('.page.active .tcard'); if(pg) pg.scrollIntoView({behavior:'smooth',block:'start'}); } }
+function changePageSize(secId, n){ if(STATE[secId]){ STATE[secId].pageSize = parseInt(n); STATE[secId].page = 1; renderSection(secId); } }
+window.gotoPage = gotoPage; window.changePageSize = changePageSize;
+
+// ─── ROW BUILDERS ────────────────────────────────────────────────────────
+function rowTop(r,i){
+  var mc = r.mg < 10 ? 'c-red' : (r.mg > 30 ? 'c-green fw6' : '');
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="muted">'+esc(r.brand||'—')+'</td>'+
+    '<td class="tr bold-green">'+fmtN(r.ts,0)+'</td>'+
+    '<td class="tr c-green">'+fmtN(r.l3,0)+'</td>'+
+    '<td class="tr">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr">'+fmtN(r.sv,0)+'</td>'+
+    '<td class="tr">'+r.cost.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td></tr>';
+}
+function rowZero(r,i){
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="muted">'+esc(r.grp||'—')+'</td>'+
+    '<td class="tr c-amber">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td>'+
+    '<td class="tr">'+r.cost.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td>'+esc(r.lpd||'—')+'</td>'+
+    '<td class="tr">'+(r.lpq||'—')+'</td>'+
+    '<td>'+ageBadge(r)+'</td>'+
+    '<td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';
+}
+function rowNeg(r,i){
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr c-red">'+fmtN(r.sv,0)+'</td>'+
+    '<td class="tr">'+fmtN(r.ts,0)+'</td>'+
+    '<td class="tr c-green">'+fmtN(r.l3,0)+'</td>'+
+    '<td class="tr">'+r.cost.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td>'+esc(r.lpd||'—')+'</td>'+
+    '<td>'+ageBadge(r)+'</td>'+
+    '<td class="tr">'+(r.lpq||'—')+'</td></tr>';
+}
+function rowOOS(r,i){
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="tr c-green fw6">'+fmtN(r.l3,0)+'</td>'+
+    '<td class="tr">'+fmtN(r.m0,1)+'</td>'+
+    '<td class="tr">'+fmtN(r.m1,1)+'</td>'+
+    '<td class="tr">'+fmtN(r.m2,1)+'</td>'+
+    '<td class="tr c-red fw6">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr">'+fmtN(r.ts,0)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';
+}
+function rowRisk(r,i){
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td>'+
+    '<td class="tr">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr c-red">'+fmtN(r.ts,0)+'</td>'+
+    '<td class="tr">'+(r.l3||0).toFixed(0)+'</td>'+
+    '<td class="tr">'+r.cost.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.mg.toFixed(1)+'%</td>'+
+    '<td>'+esc(r.lpd||'—')+'</td>'+
+    '<td>'+ageBadge(r)+'</td>'+
+    '<td class="tr">'+(r.lpq||'—')+'</td></tr>';
+}
+function rowUW(r,i){
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="tr c-amber">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr c-red fw6">'+fmtN(r.sv,0)+'</td>'+
+    '<td class="tr">'+r.cost.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td class="tr">'+(r.lpq||'—')+'</td>'+
+    '<td>'+esc(r.lpd||'—')+'</td>'+
+    '<td>'+ageBadge(r)+'</td>'+
+    '<td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';
+}
+function rowPre(r,i){
+  var mc = r.mg < 10 ? 'c-red' : (r.mg > 30 ? 'c-green fw6' : '');
+  var tsBadge = r.ts <= 0 ? '<span class="b-red">Zero Sale</span>' : '<span class="b-green">'+fmtN(r.ts,0)+'</span>';
+  return '<tr data-bc="'+esc(r.bc)+'"><td class="mono">'+(i+1)+'</td>'+
+    '<td><span class="tn" title="'+esc(r.n)+'">'+esc(r.n)+'</span><span class="bc">'+esc(r.bc)+'</span></td>'+
+    '<td><span class="b-slate">'+esc(r.cat)+'</span></td>'+
+    '<td><span class="b-brand">'+esc(r.cls)+'</span></td>'+
+    '<td class="muted">'+esc(r.grp||'—')+'</td>'+
+    '<td class="muted">'+esc(r.brand||'—')+'</td>'+
+    '<td class="tr c-amber">'+fmtN(r.stock,1)+'</td>'+
+    '<td class="tr c-amber fw6">'+fmtN(r.sv,0)+'</td>'+
+    '<td>'+tsBadge+'</td>'+
+    '<td class="tr">'+fmtN(r.l3,0)+'</td>'+
+    '<td class="tr">'+r.cost.toFixed(2)+'</td>'+
+    '<td class="tr">'+r.sell.toFixed(2)+'</td>'+
+    '<td class="tr '+mc+'">'+r.mg.toFixed(1)+'%</td>'+
+    '<td><span class="sup">'+esc(r.sup||'—')+'</span></td></tr>';
+}
+
+// ─── CLASS OPTIONS ──────────────────────────────────────────────────────
+function updClsOpts(selId, cat){
+  var el = document.getElementById(selId);
+  if(!el) return;
+  var list = (cat && cat !== 'All Categories' && CATCLS[cat]) || [];
+  el.innerHTML = '<option value="All Classes">All Classes</option>' +
+    list.map(function(c){ return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join('');
+}
+
+// ─── CSV DOWNLOAD ───────────────────────────────────────────────────────
+function downloadCSV(secId){
+  var s = STATE[secId]; if(!s) return;
+  var data = s.filtered || s.all;
+  var headers = s.csvHeaders;
+  var rows = [headers.join(',')];
+  for(var i=0; i<data.length; i++){
+    var r = data[i];
+    rows.push(headers.map(function(h){
+      var v = r[h]==null ? '' : r[h];
+      var sv = String(v).replace(/"/g, '""');
+      return '"' + sv + '"';
+    }).join(','));
+  }
+  var blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = secId + '_export_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+window.downloadCSV = downloadCSV;
+
+// ─── SECTION INITIALISER ────────────────────────────────────────────────
+function initSection(cfg){
+  var id = cfg.id;
+  STATE[id] = {
+    all: DATASETS[id], filtered: DATASETS[id],
+    cat: 'All Categories', cls: 'All Classes', q: '',
+    sortKey: null, sortDir: 'desc',
+    page: 1, pageSize: 50,
+    rowFn: cfg.rowFn, stripFn: cfg.stripFn, csvHeaders: cfg.csvHeaders
+  };
+
+  var catEl = document.getElementById(id+'-cat');
+  var clsEl = document.getElementById(id+'-cls');
+  var qEl   = document.getElementById(id+'-q');
+
+  if(catEl){
+    catEl.addEventListener('change', function(){
+      STATE[id].cat = catEl.value;
+      STATE[id].cls = 'All Classes';
+      updClsOpts(id+'-cls', catEl.value);
+      STATE[id].page = 1;
+      renderSection(id);
+    });
+  }
+  if(clsEl){
+    clsEl.addEventListener('change', function(){
+      STATE[id].cls = clsEl.value;
+      STATE[id].page = 1;
+      renderSection(id);
+    });
+  }
+  if(qEl){
+    var t;
+    qEl.addEventListener('input', function(){
+      clearTimeout(t);
+      t = setTimeout(function(){
+        STATE[id].q = qEl.value;
+        STATE[id].page = 1;
+        renderSection(id);
+      }, 180);
+    });
+  }
+
+  window[id+'Reset'] = function(){
+    if(catEl) catEl.value = 'All Categories';
+    if(qEl)   qEl.value = '';
+    STATE[id].cat = 'All Categories';
+    STATE[id].cls = 'All Classes';
+    STATE[id].q   = '';
+    STATE[id].page = 1;
+    STATE[id].sortKey = null;
+    updClsOpts(id+'-cls', 'All Categories');
+    renderSection(id);
+  };
+
+  // sortable header clicks
+  var thead = document.querySelector('#tbl-'+id+' thead');
+  if(thead){
+    thead.querySelectorAll('th.srt').forEach(function(th){
+      th.addEventListener('click', function(){
+        var key = th.getAttribute('data-key');
+        var s = STATE[id];
+        if(s.sortKey === key){
+          s.sortDir = s.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          s.sortKey = key;
+          s.sortDir = (key === 'n' || key === 'cat' || key === 'cls' || key === 'sup' || key === 'lpd') ? 'asc' : 'desc';
+        }
+        s.page = 1;
+        renderSection(id);
+      });
+    });
+  }
+
+  if(clsEl) updClsOpts(id+'-cls', 'All Categories');
+  renderSection(id);
+}
+
+// ─── GLOBAL SEARCH ──────────────────────────────────────────────────────
+var GS_MAP = null;  // bc -> {section, record}
+function buildSearchIndex(){
+  GS_MAP = [];
+  var sections = [
+    ['top','Top Movers','b-green'],['zero','Zero Sale','b-red'],['neg','Negative Stock','b-red'],
+    ['oos','OOS Active','b-red'],['risk','High Risk','b-amber'],['uw','Unwanted','b-red'],['pre','Pre-2025','b-amber']
+  ];
+  // build flat list with dedup by barcode keeping first appearance
+  var seen = {};
+  sections.forEach(function(sec){
+    var sid = sec[0], slabel = sec[1], sbadge = sec[2];
+    var arr = DATASETS[sid];
+    for(var i=0; i<arr.length; i++){
+      var r = arr[i];
+      var key = r.bc || r.n;
+      if(seen[key]) continue;
+      seen[key] = true;
+      GS_MAP.push({ bc: r.bc, n: r.n, cat: r.cat, cls: r.cls, sup: r.sup||'', brand: r.brand||'', sv: r.sv||0, stock: r.stock||0, ts: r.ts||0, sec: sid, secLabel: slabel, secBadge: sbadge });
+    }
+  });
+}
+var gsSel = -1, gsList = [];
+function gsRender(q){
+  var rEl = document.getElementById('gs-results');
+  if(!q || q.length < 2){ rEl.classList.remove('open'); rEl.innerHTML = ''; gsList = []; return; }
+  if(!GS_MAP) buildSearchIndex();
+  q = q.toLowerCase();
+  var hits = [];
+  for(var i=0; i<GS_MAP.length && hits.length < 30; i++){
+    var r = GS_MAP[i];
+    var hay = ((r.n||'')+' '+(r.bc||'')+' '+(r.sup||'')+' '+(r.brand||'')).toLowerCase();
+    if(hay.indexOf(q) !== -1) hits.push(r);
+  }
+  gsList = hits;
+  gsSel = hits.length ? 0 : -1;
+  if(!hits.length){
+    rEl.innerHTML = '<div class="gs-empty">No items match <b>"'+esc(q)+'"</b></div>';
+  } else {
+    rEl.innerHTML = '<div class="gs-section">'+hits.length+' result'+(hits.length===1?'':'s')+' — press Enter to open</div>' +
+      hits.map(function(r, idx){
+        return '<div class="gs-result'+(idx===0?' sel':'')+'" data-idx="'+idx+'">' +
+          '<span class="'+r.secBadge+' gsbadge">'+r.secLabel+'</span>' +
+          '<div class="gsn" title="'+esc(r.n)+'">'+esc(r.n)+'</div>' +
+          '<span class="gsmeta">'+esc(r.bc)+' • Stk '+fmtN(r.stock,0)+' • SV '+fmtN(r.sv,0)+'</span>' +
+        '</div>';
+      }).join('');
+    rEl.querySelectorAll('.gs-result').forEach(function(el){
+      el.addEventListener('mouseenter', function(){
+        gsSel = parseInt(el.getAttribute('data-idx'));
+        rEl.querySelectorAll('.gs-result').forEach(function(x){ x.classList.remove('sel'); });
+        el.classList.add('sel');
+      });
+      el.addEventListener('click', function(){ gsOpen(parseInt(el.getAttribute('data-idx'))); });
+    });
+  }
+  rEl.classList.add('open');
+}
+function gsOpen(idx){
+  if(idx < 0 || idx >= gsList.length) return;
+  var r = gsList[idx];
+  document.getElementById('gs-input').value = '';
+  document.getElementById('gs-results').classList.remove('open');
+  // jump to that section, set query filter to the barcode, scroll to row
+  SP(r.sec);
+  setTimeout(function(){
+    var qEl = document.getElementById(r.sec+'-q');
+    if(qEl){
+      qEl.value = r.bc;
+      STATE[r.sec].q = r.bc;
+      STATE[r.sec].page = 1;
+      renderSection(r.sec);
+      setTimeout(function(){
+        var row = document.querySelector('#'+r.sec+'-tb tr[data-bc="'+CSS.escape(r.bc)+'"]');
+        if(row){
+          row.classList.add('hl');
+          row.scrollIntoView({ behavior:'smooth', block:'center' });
+          setTimeout(function(){ row.classList.remove('hl'); }, 2400);
+        }
+      }, 120);
+    }
+  }, 100);
+}
+function initGlobalSearch(){
+  var inp = document.getElementById('gs-input');
+  var rEl = document.getElementById('gs-results');
+  if(!inp || !rEl) return;
+  var t;
+  inp.addEventListener('input', function(){
+    clearTimeout(t);
+    t = setTimeout(function(){ gsRender(inp.value); }, 120);
+  });
+  inp.addEventListener('keydown', function(e){
+    if(!rEl.classList.contains('open')) return;
+    if(e.key === 'ArrowDown'){
+      e.preventDefault();
+      gsSel = Math.min(gsList.length-1, gsSel+1);
+      rEl.querySelectorAll('.gs-result').forEach(function(el, i){ el.classList.toggle('sel', i === gsSel); });
+      var sel = rEl.querySelector('.gs-result.sel'); if(sel) sel.scrollIntoView({block:'nearest'});
+    } else if(e.key === 'ArrowUp'){
+      e.preventDefault();
+      gsSel = Math.max(0, gsSel-1);
+      rEl.querySelectorAll('.gs-result').forEach(function(el, i){ el.classList.toggle('sel', i === gsSel); });
+      var sel = rEl.querySelector('.gs-result.sel'); if(sel) sel.scrollIntoView({block:'nearest'});
+    } else if(e.key === 'Enter'){
+      e.preventDefault();
+      gsOpen(gsSel);
+    } else if(e.key === 'Escape'){
+      inp.value = ''; rEl.classList.remove('open'); inp.blur();
+    }
+  });
+  document.addEventListener('click', function(e){
+    if(!inp.contains(e.target) && !rEl.contains(e.target)) rEl.classList.remove('open');
+  });
+  // Ctrl/Cmd+K
+  document.addEventListener('keydown', function(e){
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'){
+      e.preventDefault();
+      inp.focus();
+      inp.select();
+    }
+    if(e.key === '/' && document.activeElement && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'SELECT'){
+      e.preventDefault();
+      inp.focus();
+    }
+  });
+}
+
+// ─── STRIP CONFIGS ──────────────────────────────────────────────────────
+function stripZero(d, sv){ return [['Items Shown',fmtS(d.length),''],['Stock Value at Risk','AED '+fmtS(sv),'amb'],['Avg / Item',d.length?'AED '+fmtS(sv/d.length):'—',''],['Total Zero-Sale',fmtS(K.zero_count),'red']]; }
+function stripNeg(d, sv){ return [['Items Shown',fmtS(d.length),''],['Neg. Value Exposure','AED '+fmtS(Math.abs(sv)),'red'],['Total Negative',fmtS(K.neg_count),'red'],['Priority','CRITICAL','amb']]; }
+function stripOOS(d, sv, l3){ return [['OOS Items',fmtS(d.length),'red'],['Last 3M Sales',fmtS(l3)+' units','grn'],['Total OOS Portfolio',fmtS(K.oos_count),'red'],['Revenue Risk','HIGH','amb']]; }
+function stripRisk(d, sv){ return [['Items Shown',fmtS(d.length),''],['Value at Risk','AED '+fmtS(sv),'amb'],['Portfolio Exposure','AED '+fmtS(K.risk_sv),'red'],['Total High Risk',fmtS(K.risk_count),'amb']]; }
+function stripUW(d, sv){ return [['Items Shown',fmtS(d.length),''],['Stock Value','AED '+fmtS(sv),'red'],['Portfolio Total','AED '+fmtS(K.uw_sv),'red'],['Total Unwanted',fmtS(K.uw_count),'red']]; }
+function stripPre(d, sv){
+  var zi = d.filter(function(r){ return r.ts<=0; }), si = d.filter(function(r){ return r.ts>0; });
+  var zsv = zi.reduce(function(s,r){ return s+(r.sv||0); }, 0);
+  var ssv = si.reduce(function(s,r){ return s+(r.sv||0); }, 0);
+  return [['Total Shown',fmtS(d.length),'amb'],['Total Stock Value','AED '+fmtS(sv),'amb'],['Zero Sale — '+fmtS(zi.length),'AED '+fmtS(zsv),'red'],['Still Selling — '+fmtS(si.length),'AED '+fmtS(ssv),'grn']];
+}
+
+// ─── BOOTSTRAP ──────────────────────────────────────────────────────────
+function initAll(){
+  // nav button click handlers
+  document.querySelectorAll('.nbtn').forEach(function(b){
+    var pid = b.id.replace('nb-','');
+    b.addEventListener('click', function(){ SP(pid); });
+  });
+
+  initSection({ id:'top',  rowFn: rowTop,  stripFn: null,       csvHeaders:['bc','n','cat','cls','brand','ts','l3','stock','sv','cost','sell','mg'] });
+  initSection({ id:'zero', rowFn: rowZero, stripFn: stripZero,  csvHeaders:['bc','n','cat','cls','grp','sup','stock','sv','cost','sell','lpd','lpq','ageb'] });
+  initSection({ id:'neg',  rowFn: rowNeg,  stripFn: stripNeg,   csvHeaders:['bc','n','cat','cls','cost','sell','stock','sv','ts','l3','lpd','lpq','ageb'] });
+  initSection({ id:'oos',  rowFn: rowOOS,  stripFn: stripOOS,   csvHeaders:['bc','n','cat','cls','sup','sell','stock','ts','l3','m0','m1','m2'] });
+  initSection({ id:'risk', rowFn: rowRisk, stripFn: stripRisk,  csvHeaders:['bc','n','cat','cls','cost','sell','stock','sv','ts','mg','l3','lpd','lpq','ageb'] });
+  initSection({ id:'uw',   rowFn: rowUW,   stripFn: stripUW,    csvHeaders:['bc','n','cat','cls','cost','sell','stock','sv','lpq','lpd','sup','ageb'] });
+  initSection({ id:'pre',  rowFn: rowPre,  stripFn: stripPre,   csvHeaders:['bc','n','cat','cls','grp','brand','sup','stock','sv','ts','l3','cost','sell','mg'] });
+
+  initCharts();
+  initGlobalSearch();
+  renderTopSuppliers();
+
+  SP('ov');
+}
+function renderTopSuppliers(){
+  var el = document.getElementById('top-sup');
+  if(!el || !TOP_SUP || !TOP_SUP.length) return;
+  var mx = TOP_SUP[0].sales || 1;
+  el.innerHTML = TOP_SUP.map(function(s, i){
+    return '<div class="rank-row"><div class="rn">'+(i+1)+'</div>'+
+      '<div class="rnm" title="'+esc(s.name)+'">'+esc(s.name)+' <span class="muted" style="font-size:10.5px">('+s.items+' SKUs)</span></div>'+
+      '<div class="rb"><div class="rf" style="width:'+(s.sales/mx*100).toFixed(1)+'%"></div></div>'+
+      '<div class="rv">'+fmtN(s.sales,0)+'</div></div>';
+  }).join('');
+}
+
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', initAll);
+} else {
+  initAll();
+}
+"""
+
+    # ── Sortable header helper (used in HTML below) ──────────────────────────
+    def sth(label, key, num=False):
+        cls = 'srt tr' if num else 'srt'
+        return f'<th class="{cls}" data-key="{key}">{label}</th>'
+
     def fbar(prefix):
+        # Each section has Cat + Class + Search box + Reset + Count + CSV
         return (f'<div class="fbar">'
                 f'<span class="flbl">Filter</span><div class="fsep"></div>'
                 f'<div class="fg"><label>Category</label><select class="fsel" id="{prefix}-cat">{cat_opts}</select></div>'
                 f'<div class="fg"><label>Class</label><select class="fsel" id="{prefix}-cls"></select></div>'
+                f'<div class="fg"><label>Search</label><input class="fin" id="{prefix}-q" type="text" placeholder="Name, barcode, supplier…"></div>'
                 f'<button class="freset" onclick="{prefix}Reset()">Reset</button>'
                 f'<span class="fcnt" id="{prefix}-cnt"></span>'
-                f'<button class="csv-btn" onclick="{prefix}CSV()">&#8595; CSV</button>'
+                f'<button class="csv-btn" onclick="downloadCSV(\'{prefix}\')">↓ Export CSV</button>'
                 f'</div>')
 
-    html = f"""<!DOCTYPE html>
+    # ── Headers for each table (sortable) ────────────────────────────────────
+    top_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                 + sth('Category', 'cat') + sth('Class', 'cls') + sth('Brand', 'brand')
+                 + sth('Total Sales', 'ts', True) + sth('Last 3M', 'l3', True)
+                 + sth('Stock', 'stock', True) + sth('Stock Value (AED)', 'sv', True)
+                 + sth('Cost', 'cost', True) + sth('Selling', 'sell', True) + sth('Margin%', 'mg', True)
+                 + '</tr>')
+    zero_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                  + sth('Category', 'cat') + sth('Class', 'cls') + sth('Group', 'grp')
+                  + sth('Stock', 'stock', True) + sth('Stock Value (AED)', 'sv', True)
+                  + sth('Cost', 'cost', True) + sth('Selling', 'sell', True)
+                  + sth('Last Purchase', 'lpd') + sth('LP Qty', 'lpq', True)
+                  + sth('Ageing', 'ageb') + '<th>Supplier</th></tr>')
+    neg_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                 + sth('Category', 'cat') + sth('Class', 'cls')
+                 + sth('Stock Qty', 'stock', True) + sth('Stock Value (AED)', 'sv', True)
+                 + sth('Total Sales', 'ts', True) + sth('Last 3M', 'l3', True)
+                 + sth('Cost', 'cost', True) + sth('Selling', 'sell', True)
+                 + sth('Last Purchase', 'lpd') + sth('Ageing', 'ageb')
+                 + sth('LP Qty', 'lpq', True) + '</tr>')
+    oos_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                 + sth('Category', 'cat') + sth('Class', 'cls')
+                 + sth('Last 3M', 'l3', True)
+                 + f'<th class="srt tr" data-key="m0">{oos_h[0]}</th>'
+                 + f'<th class="srt tr" data-key="m1">{oos_h[1]}</th>'
+                 + f'<th class="srt tr" data-key="m2">{oos_h[2]}</th>'
+                 + sth('Current Stock', 'stock', True) + sth('Total Sales', 'ts', True)
+                 + sth('Selling', 'sell', True) + '<th>Supplier</th></tr>')
+    risk_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                  + sth('Category', 'cat') + sth('Class', 'cls')
+                  + sth('Stock Value (AED)', 'sv', True) + sth('Stock', 'stock', True)
+                  + sth('Total Sales', 'ts', True) + sth('Last 3M', 'l3', True)
+                  + sth('Cost', 'cost', True) + sth('Selling', 'sell', True) + sth('Margin%', 'mg', True)
+                  + sth('Last Purchase', 'lpd') + sth('Ageing', 'ageb') + sth('LP Qty', 'lpq', True) + '</tr>')
+    uw_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                + sth('Category', 'cat') + sth('Class', 'cls')
+                + sth('Current Stock', 'stock', True) + sth('Stock Value (AED)', 'sv', True)
+                + sth('Cost', 'cost', True) + sth('Selling', 'sell', True)
+                + sth('Last PO Qty', 'lpq', True) + sth('Last Purchase Date', 'lpd')
+                + sth('Ageing', 'ageb') + '<th>Last Purchase Supplier</th></tr>')
+    pre_thead = ('<tr><th>#</th><th>Item Name / Barcode</th>'
+                 + sth('Category', 'cat') + sth('Class', 'cls') + sth('Group', 'grp') + sth('Brand', 'brand')
+                 + sth('Stock Qty', 'stock', True) + sth('Stock Value (AED)', 'sv', True)
+                 + sth('Total Sales', 'ts', True) + sth('Last 3M', 'l3', True)
+                 + sth('Cost', 'cost', True) + sth('Selling', 'sell', True) + sth('Margin%', 'mg', True)
+                 + '<th>Supplier</th></tr>')
+
+    HTML_BODY = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>AL MADINA GROUP — Inventory Dashboard</title>
+<title>AL MADINA GROUP — Inventory Intelligence Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>{CSS}</style>
 </head>
 <body>
 <header class="hdr">
   <div class="hdr-l">
-    <div class="logo"><div class="lm">AM</div><div><div class="lt">AL MADINA GROUP</div><div class="ls">Inventory Management System</div></div></div>
-    <div class="hsep"></div><div class="hlbl">Stock Intelligence Report</div>
+    <div class="logo">
+      <div class="lm">AM</div>
+      <div><div class="lt">AL MADINA GROUP</div><div class="ls">Inventory Intelligence Platform</div></div>
+    </div>
+    <div class="hsep"></div>
+    <div class="hlbl">Stock Health Report</div>
   </div>
-  <div class="hr">{fmtN(K['total_items'],0)} SKUs &nbsp;|&nbsp; {dlabel}</div>
+  <div class="gs-wrap">
+    <span class="gs-ico">⌕</span>
+    <input class="gs-input" id="gs-input" type="text" placeholder="Search all items by name, barcode, or supplier…" autocomplete="off">
+    <span class="gs-kbd">⌘K</span>
+    <div class="gs-results" id="gs-results"></div>
+  </div>
+  <div class="hr-r">
+    <div class="hmeta"><b>{fmtN(K['total_items'],0)}</b> SKUs<br>{dlabel}</div>
+  </div>
 </header>
+
 <nav class="nav">
-  <button class="nbtn active" id="nb-ov"   onclick="SP('ov')">Overview</button>
-  <button class="nbtn"        id="nb-top"  onclick="SP('top')">Top Movers</button>
-  <button class="nbtn"        id="nb-zero" onclick="SP('zero')">Zero Sale Stock <span class="npill amb">{fmtN(K['zero_count'],0)}</span></button>
-  <button class="nbtn"        id="nb-neg"  onclick="SP('neg')">Negative Stock <span class="npill red">{fmtN(K['neg_count'],0)}</span></button>
-  <button class="nbtn"        id="nb-oos"  onclick="SP('oos')">OOS / Active Demand <span class="npill red">{fmtN(K['oos_count'],0)}</span></button>
-  <button class="nbtn"        id="nb-risk" onclick="SP('risk')">High Risk Slow Movers <span class="npill amb">{fmtN(K['risk_count'],0)}</span></button>
-  <button class="nbtn"        id="nb-uw"   onclick="SP('uw')">Unwanted Repurchases <span class="npill red">{fmtN(K['uw_count'],0)}</span></button>
-  <button class="nbtn"        id="nb-pre"  onclick="SP('pre')">Pre-2025 Stock <span class="npill amb">{fmtN(K['pre_count'],0)}</span></button>
-  <button class="nbtn"        id="nb-ins"  onclick="SP('ins')">Insights &amp; Actions</button>
+  <button class="nbtn active" id="nb-ov">Overview</button>
+  <button class="nbtn"        id="nb-top">Top Movers <span class="npill blu">{fmtN(len(_data_blob['TOP']),0)}</span></button>
+  <button class="nbtn"        id="nb-zero">Zero Sale <span class="npill amb">{fmtN(K['zero_count'],0)}</span></button>
+  <button class="nbtn"        id="nb-neg">Negative Stock <span class="npill red">{fmtN(K['neg_count'],0)}</span></button>
+  <button class="nbtn"        id="nb-oos">OOS / Active Demand <span class="npill red">{fmtN(K['oos_count'],0)}</span></button>
+  <button class="nbtn"        id="nb-risk">High Risk Slow Movers <span class="npill amb">{fmtN(K['risk_count'],0)}</span></button>
+  <button class="nbtn"        id="nb-uw">Unwanted Repurchases <span class="npill red">{fmtN(K['uw_count'],0)}</span></button>
+  <button class="nbtn"        id="nb-pre">Pre-2025 Stock <span class="npill amb">{fmtN(K['pre_count'],0)}</span></button>
+  <button class="nbtn"        id="nb-ins">Insights &amp; Actions</button>
 </nav>
 
+<!-- ═══ OVERVIEW ═══ -->
 <div id="pg-ov" class="page active"><div class="pi">
   <div class="ptitle">Inventory Overview</div>
-  <div class="pdesc">{fmtN(K['total_items'],0)} SKUs — all categories and classes.</div>
+  <div class="pdesc">Portfolio of <b>{fmtN(K['total_items'],0)} SKUs</b> — stock value <b>{fmtA(K['total_sv'],0)}</b>, cumulative sales <b>{fmtN(K['total_ts'],0)} units</b>. Tap any KPI category in the nav to drill in. Press <b>⌘K</b> or <b>/</b> to search across everything.</div>
   <div class="kgrid">{kpi_html}</div>
   <div class="crow c1"><div class="cbox">
     <div class="chead"><span class="ctitle">Monthly Sales Volume (Units)</span><span class="cmeta">Most recent month may be partial</span></div>
@@ -916,139 +1659,174 @@ if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded
     <div class="cbox"><div class="chead"><span class="ctitle">Portfolio Health</span></div><div class="ch ch260"><canvas id="chH"></canvas></div></div>
   </div>
   <div class="tcard"><div class="thd"><span class="ttitle">Class Performance Summary</span><span class="b-slate">Top 12 Classes</span></div>
-  <div class="tsc"><table><thead><tr><th>Class</th><th class="tr">Total Sales</th><th class="tr">Stock Value (AED)</th><th class="tr">SKUs</th><th class="tr">Zero Sale</th><th class="tr">Neg Stock</th><th class="tr">OOS</th><th>Status</th></tr></thead>
-  <tbody>{cls_table}</tbody></table></div></div>
+    <div class="tsc"><table><thead><tr><th>Class</th><th class="tr">Total Sales</th><th class="tr">Stock Value (AED)</th><th class="tr">SKUs</th><th class="tr">Zero Sale</th><th class="tr">Neg Stock</th><th class="tr">OOS</th><th>Status</th></tr></thead>
+      <tbody>{cls_table}</tbody></table></div></div>
 </div></div>
 
+<!-- ═══ TOP MOVERS ═══ -->
 <div id="pg-top" class="page"><div class="pi">
   <div class="ptitle">Top Moving Items</div>
-  <div class="pdesc">All items with recorded sales, ranked by total units sold.</div>
+  <div class="pdesc">All items with recorded sales, ranked by total units sold. Click any column header to re-sort.</div>
   {fbar('top')}
   <div class="cbox" style="margin-bottom:20px">
-    <div class="chead"><span class="ctitle">Top 10 — Sales Volume</span></div>
+    <div class="chead"><span class="ctitle">Top 10 — Sales Volume (Filtered View)</span></div>
     <div class="rank-list" id="top-rank"></div>
   </div>
-  <div class="tcard"><div class="thd"><span class="ttitle">All Items by Sales Volume</span><div class="tinfo"><span class="fcnt" id="top-cnt"></span><span class="b-brand">Sorted by Total Sales</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th>Brand</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Margin%</th></tr></thead>
-  <tbody id="top-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-top"><div class="thd"><span class="ttitle">All Items by Sales Volume</span><div class="tinfo"><span class="b-brand">Click headers to sort</span></div></div>
+    <div class="tsc tmh"><table><thead>{top_thead}</thead><tbody id="top-tb"></tbody></table></div>
+    <div class="pgn" id="top-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ ZERO SALE ═══ -->
 <div id="pg-zero" class="page"><div class="pi">
   <div class="ptitle">Zero Sale Items &mdash; In Stock</div>
   <div class="pdesc">Items with no sales recorded, currently holding positive stock. Pre-2025 items (blank LP Date) have a dedicated page.</div>
   <div class="arow">
-    <div class="abox red"><div class="ah"><i class="ai">&#9888;</i><span class="at">Dead Stock &mdash; {fmtN(K['zero_count'],0)} Items</span></div><div class="ab">Zero sales with no demonstrated demand. Capital tied up with no return.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">&#8377;</i><span class="at">Capital at Risk &mdash; {fmtA(K['zero_sv'],0)}</span></div><div class="ab">Immediate action: supplier return, clearance promotion, or write-off.</div></div>
-    <div class="abox blu"><div class="ah"><i class="ai">&#8594;</i><span class="at">Action Required</span></div><div class="ab">Classify: (1) Supplier return, (2) Promotional clearance, (3) Write-off. All within 30 days.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">⚠</i><span class="at">Dead Stock — {fmtN(K['zero_count'],0)} Items</span></div><div class="ab">Zero sales with no demonstrated demand. Capital tied up with no return.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">₹</i><span class="at">Capital at Risk — {fmtA(K['zero_sv'],0)}</span></div><div class="ab">Immediate action: supplier return, clearance promotion, or write-off.</div></div>
+    <div class="abox blu"><div class="ah"><i class="ai">→</i><span class="at">Action Required</span></div><div class="ab">Classify: (1) Supplier return, (2) Promotional clearance, (3) Write-off. All within 30 days.</div></div>
   </div>
   {fbar('zero')}
   <div id="zero-strip"></div>
-  <div class="tcard"><div class="thd"><span class="ttitle">Zero Sale Items with Stock</span><div class="tinfo"><span class="b-red">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th>Group</th><th class="tr">Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th>Last Purchase</th><th>Ageing</th><th class="tr">LP Qty</th><th>Supplier</th></tr></thead>
-  <tbody id="zero-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-zero"><div class="thd"><span class="ttitle">Zero Sale Items with Stock</span><div class="tinfo"><span class="b-red">Default: Stock Value (high → low)</span></div></div>
+    <div class="tsc tmh"><table><thead>{zero_thead}</thead><tbody id="zero-tb"></tbody></table></div>
+    <div class="pgn" id="zero-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ NEGATIVE STOCK ═══ -->
 <div id="pg-neg" class="page"><div class="pi">
   <div class="ptitle">Negative Stock Items</div>
   <div class="pdesc">Items with negative on-hand quantities — unposted GRNs, missing receipts, or reconciliation issues.</div>
   <div class="arow">
-    <div class="abox red"><div class="ah"><i class="ai">&#9888;</i><span class="at">{fmtN(K['neg_count'],0)} Items &mdash; Negative Quantity</span></div><div class="ab">Distorts financial reports and reorder calculations. Root cause required immediately.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">&#9737;</i><span class="at">Probable Causes</span></div><div class="ab">Unposted GRNs, manual sales errors, missing supplier invoices.</div></div>
-    <div class="abox blu"><div class="ah"><i class="ai">&#8594;</i><span class="at">Resolution Steps</span></div><div class="ab">1. Physical count. 2. Match GRNs. 3. Post verified receipts. 4. Raise adjustment journals.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">⚠</i><span class="at">{fmtN(K['neg_count'],0)} Items — Negative Quantity</span></div><div class="ab">Distorts financial reports and reorder calculations. Root cause required immediately.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">☉</i><span class="at">Probable Causes</span></div><div class="ab">Unposted GRNs, manual sales errors, missing supplier invoices.</div></div>
+    <div class="abox blu"><div class="ah"><i class="ai">→</i><span class="at">Resolution Steps</span></div><div class="ab">1. Physical count. 2. Match GRNs. 3. Post verified receipts. 4. Raise adjustment journals.</div></div>
   </div>
   {fbar('neg')}
   <div id="neg-strip"></div>
-  <div class="tcard"><div class="thd"><span class="ttitle">Negative Stock Items</span><div class="tinfo"><span class="b-red">Sorted by Negative Qty (Worst First)</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Stock Qty</th><th class="tr">Stock Value (AED)</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th>Last Purchase</th><th>Ageing</th><th class="tr">LP Qty</th></tr></thead>
-  <tbody id="neg-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-neg"><div class="thd"><span class="ttitle">Negative Stock Items</span><div class="tinfo"><span class="b-red">Default: Negative Qty (worst first)</span></div></div>
+    <div class="tsc tmh"><table><thead>{neg_thead}</thead><tbody id="neg-tb"></tbody></table></div>
+    <div class="pgn" id="neg-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ OOS ═══ -->
 <div id="pg-oos" class="page"><div class="pi">
-  <div class="ptitle">Out-of-Stock &mdash; Active Demand</div>
-  <div class="pdesc">Items that sold in the last 3 months but currently have zero or negative stock.</div>
+  <div class="ptitle">Out-of-Stock — Active Demand</div>
+  <div class="pdesc">Items that sold in the last 3 months but currently have zero or negative stock. Highest priority for reordering.</div>
   <div class="arow">
-    <div class="abox red"><div class="ah"><i class="ai">&#9873;</i><span class="at">{fmtN(K['oos_count'],0)} Items Actively Out of Stock</span></div><div class="ab">Confirmed recent demand but unavailable. Every day without stock is direct revenue loss.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">&#8679;</i><span class="at">Prioritise by Last 3M Velocity</span></div><div class="ab">Highest recent sales = greatest daily revenue risk. Emergency POs immediately.</div></div>
-    <div class="abox grn"><div class="ah"><i class="ai">&#10003;</i><span class="at">Immediate Reorder Candidates</span></div><div class="ab">Proven demand. Predictable replenishment ROI. Buying team action list for today.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">⚑</i><span class="at">{fmtN(K['oos_count'],0)} Items Actively Out of Stock</span></div><div class="ab">Confirmed recent demand but unavailable. Every day without stock is direct revenue loss.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">⇧</i><span class="at">Prioritise by Last 3M Velocity</span></div><div class="ab">Highest recent sales = greatest daily revenue risk. Emergency POs immediately.</div></div>
+    <div class="abox grn"><div class="ah"><i class="ai">✓</i><span class="at">Immediate Reorder Candidates</span></div><div class="ab">Proven demand. Predictable replenishment ROI. Buying team action list for today.</div></div>
   </div>
   {fbar('oos')}
   <div id="oos-strip"></div>
-  <div class="tcard"><div class="thd"><span class="ttitle">OOS Items with Recent Sales</span><div class="tinfo"><span class="b-red">Sorted by Last 3M Sales</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Last 3M</th><th class="tr">{oos_h[0]}</th><th class="tr">{oos_h[1]}</th><th class="tr">{oos_h[2]}</th><th class="tr">Current Stock</th><th class="tr">Total Sales</th><th class="tr">Selling</th><th>Supplier</th></tr></thead>
-  <tbody id="oos-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-oos"><div class="thd"><span class="ttitle">OOS Items with Recent Sales</span><div class="tinfo"><span class="b-red">Default: Last 3M sales (high → low)</span></div></div>
+    <div class="tsc tmh"><table><thead>{oos_thead}</thead><tbody id="oos-tb"></tbody></table></div>
+    <div class="pgn" id="oos-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ HIGH RISK ═══ -->
 <div id="pg-risk" class="page"><div class="pi">
   <div class="ptitle">High-Value Slow Movers</div>
-  <div class="pdesc">Stock value &gt; AED 200 and total sales &lt; 10 units. High capital, minimal turnover.</div>
+  <div class="pdesc">Stock value &gt; AED 200 and total sales &lt; 10 units. High capital deployment, minimal turnover.</div>
   <div class="arow">
-    <div class="abox amb"><div class="ah"><i class="ai">&#8595;</i><span class="at">{fmtA(K['risk_sv'],0)} &mdash; Low Turnover Capital</span></div><div class="ab">{fmtN(K['risk_count'],0)} items with fewer than 10 units sold.</div></div>
-    <div class="abox red"><div class="ah"><i class="ai">&#8856;</i><span class="at">Holding Cost Alert</span></div><div class="ab">At 15% annual holding cost: ~{fmtA(K['risk_sv']*0.15,0)}/year. Redeploy to fast-moving lines.</div></div>
-    <div class="abox blu"><div class="ah"><i class="ai">&#8594;</i><span class="at">Exit Strategy</span></div><div class="ab">Items &gt;6 months, &lt;3 units: immediate markdown. Return-eligible: negotiate credit.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">↓</i><span class="at">{fmtA(K['risk_sv'],0)} — Low Turnover Capital</span></div><div class="ab">{fmtN(K['risk_count'],0)} items with fewer than 10 units sold.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">⊘</i><span class="at">Holding Cost Alert</span></div><div class="ab">At 15% annual holding cost: ~{fmtA(K['risk_sv']*0.15,0)}/year. Redeploy to fast-moving lines.</div></div>
+    <div class="abox blu"><div class="ah"><i class="ai">→</i><span class="at">Exit Strategy</span></div><div class="ab">Items &gt;6 months, &lt;3 units: immediate markdown. Return-eligible: negotiate credit.</div></div>
   </div>
   {fbar('risk')}
   <div id="risk-strip"></div>
-  <div class="tcard"><div class="thd"><span class="ttitle">High-Value Slow Moving Items</span><div class="tinfo"><span class="b-amber">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Stock Value (AED)</th><th class="tr">Stock</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Margin%</th><th>Last Purchase</th><th>Ageing</th><th class="tr">LP Qty</th></tr></thead>
-  <tbody id="risk-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-risk"><div class="thd"><span class="ttitle">High-Value Slow Moving Items</span><div class="tinfo"><span class="b-amber">Default: Stock Value (high → low)</span></div></div>
+    <div class="tsc tmh"><table><thead>{risk_thead}</thead><tbody id="risk-tb"></tbody></table></div>
+    <div class="pgn" id="risk-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ UNWANTED REPURCHASES ═══ -->
 <div id="pg-uw" class="page"><div class="pi">
   <div class="ptitle">Unwanted Repurchases</div>
-  <div class="pdesc">Stock &gt; Last Purchase Qty AND Total Sales = 0 — re-purchased with prior unsold stock.</div>
+  <div class="pdesc">Stock &gt; Last Purchase Qty AND Total Sales = 0 — re-purchased even though prior stock was unsold.</div>
   <div class="arow">
-    <div class="abox red"><div class="ah"><i class="ai">&#8856;</i><span class="at">{fmtA(K['uw_sv'],0)} &mdash; Confirmed Re-purchase Waste</span></div><div class="ab">{fmtN(K['uw_count'],0)} items had prior stock, were re-purchased, and still haven't sold.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">&#9737;</i><span class="at">Supplier Leverage</span></div><div class="ab">Prior stock + repurchase + zero sales = strong evidence for buy-back or credit notes.</div></div>
-    <div class="abox blu"><div class="ah"><i class="ai">&#8594;</i><span class="at">Process Fix</span></div><div class="ab">Require buyers to check stock before any PO. System alert on zero-sale items with existing stock.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">⊘</i><span class="at">{fmtA(K['uw_sv'],0)} — Confirmed Re-purchase Waste</span></div><div class="ab">{fmtN(K['uw_count'],0)} items had prior stock, were re-purchased, and still haven't sold.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">☉</i><span class="at">Supplier Leverage</span></div><div class="ab">Prior stock + repurchase + zero sales = strong evidence for buy-back or credit notes.</div></div>
+    <div class="abox blu"><div class="ah"><i class="ai">→</i><span class="at">Process Fix</span></div><div class="ab">Require buyers to check stock before any PO. System alert on zero-sale items with existing stock.</div></div>
   </div>
   {fbar('uw')}
   <div id="uw-strip"></div>
-  <div class="tcard"><div class="thd"><span class="ttitle">Re-purchased Items with Zero Sales</span><div class="tinfo"><span class="b-red">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th class="tr">Current Stock</th><th class="tr">Stock Value (AED)</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Last PO Qty</th><th>Last Purchase Date</th><th>Ageing</th><th>Last Purchase Supplier</th></tr></thead>
-  <tbody id="uw-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-uw"><div class="thd"><span class="ttitle">Re-purchased Items with Zero Sales</span><div class="tinfo"><span class="b-red">Default: Stock Value (high → low)</span></div></div>
+    <div class="tsc tmh"><table><thead>{uw_thead}</thead><tbody id="uw-tb"></tbody></table></div>
+    <div class="pgn" id="uw-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ PRE-2025 ═══ -->
 <div id="pg-pre" class="page"><div class="pi">
   <div class="ptitle">Pre-2025 Stock</div>
   <div class="pdesc">Items with stock on hand but no Last Purchase Date — purchased before the current data window. Includes selling and non-selling items.</div>
   <div class="arow">
-    <div class="abox amb"><div class="ah"><i class="ai">&#9685;</i><span class="at">{fmtN(K['pre_count'],0)} Items — No Purchase Record</span></div><div class="ab">Blank Last Purchase Date = stock entered before 2025. Total value: {fmtA(K['pre_sv'],0)}. Oldest, most overlooked inventory.</div></div>
-    <div class="abox red"><div class="ah"><i class="ai">&#9888;</i><span class="at">{fmtN(K['pre_zero_count'],0)} Items — Zero Sales + Pre-2025</span></div><div class="ab">Never sold and no purchase history. Most aged dead stock. {fmtA(K['pre_zero_sv'],0)} at highest write-off risk.</div></div>
-    <div class="abox grn"><div class="ah"><i class="ai">&#10003;</i><span class="at">{fmtN(K['pre_count']-K['pre_zero_count'],0)} Items — Still Selling</span></div><div class="ab">Pre-2025 stock with proven longevity. Continue to replenish when stock runs low.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">◔</i><span class="at">{fmtN(K['pre_count'],0)} Items — No Purchase Record</span></div><div class="ab">Blank Last Purchase Date = stock entered before 2025. Total value: {fmtA(K['pre_sv'],0)}.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">⚠</i><span class="at">{fmtN(K['pre_zero_count'],0)} Items — Zero Sales + Pre-2025</span></div><div class="ab">Never sold, no purchase history. Most aged dead stock — {fmtA(K['pre_zero_sv'],0)} at highest write-off risk.</div></div>
+    <div class="abox grn"><div class="ah"><i class="ai">✓</i><span class="at">{fmtN(K['pre_count']-K['pre_zero_count'],0)} Items — Still Selling</span></div><div class="ab">Pre-2025 stock with proven longevity. Continue to replenish when stock runs low.</div></div>
   </div>
   {fbar('pre')}
   <div id="pre-strip"></div>
-  <div class="tcard"><div class="thd"><span class="ttitle">Pre-2025 Stock Items (Blank LP Date)</span><div class="tinfo"><span class="b-amber">Sorted by Stock Value</span></div></div>
-  <div class="tsc tmh"><table><thead><tr><th>#</th><th>Item Name / Barcode</th><th>Category</th><th>Class</th><th>Group</th><th>Brand</th><th class="tr">Stock Qty</th><th class="tr">Stock Value (AED)</th><th class="tr">Total Sales</th><th class="tr">Last 3M</th><th class="tr">Cost</th><th class="tr">Selling</th><th class="tr">Margin%</th><th>Supplier</th></tr></thead>
-  <tbody id="pre-tb"></tbody></table></div></div>
+  <div class="tcard" id="tbl-pre"><div class="thd"><span class="ttitle">Pre-2025 Stock Items (Blank LP Date)</span><div class="tinfo"><span class="b-amber">Default: Stock Value (high → low)</span></div></div>
+    <div class="tsc tmh"><table><thead>{pre_thead}</thead><tbody id="pre-tb"></tbody></table></div>
+    <div class="pgn" id="pre-pgn"></div>
+  </div>
 </div></div>
 
+<!-- ═══ INSIGHTS ═══ -->
 <div id="pg-ins" class="page"><div class="pi">
   <div class="ptitle">Strategic Analysis &amp; Action Plan</div>
   <div class="pdesc">Prioritised management recommendations from the full inventory dataset.</div>
   <div class="arow" style="grid-template-columns:1fr 1fr">
-    <div class="abox red"><div class="ah"><i class="ai">P1</i><span class="at">OOS Active Demand &mdash; {fmtN(K['oos_count'],0)} Items</span></div><div class="ab">Actively selling but unavailable. Emergency POs for top items by last-3M velocity immediately.</div></div>
-    <div class="abox red"><div class="ah"><i class="ai">P1</i><span class="at">Repurchase Waste &mdash; {fmtA(K['uw_sv'],0)}</span></div><div class="ab">{fmtN(K['uw_count'],0)} items re-purchased with existing stock and zero sales. Supplier buy-back or credit notes.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">P2</i><span class="at">Negative Stock &mdash; {fmtN(K['neg_count'],0)} Items</span></div><div class="ab">Compromises financial reporting. 5-business-day resolution. Physical count + GRN reconciliation.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">P1</i><span class="at">OOS Active Demand — {fmtN(K['oos_count'],0)} Items</span></div><div class="ab">Actively selling but unavailable. Emergency POs for top items by last-3M velocity immediately.</div></div>
+    <div class="abox red"><div class="ah"><i class="ai">P1</i><span class="at">Repurchase Waste — {fmtA(K['uw_sv'],0)}</span></div><div class="ab">{fmtN(K['uw_count'],0)} items re-purchased with existing stock and zero sales. Supplier buy-back or credit notes.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">P2</i><span class="at">Negative Stock — {fmtN(K['neg_count'],0)} Items</span></div><div class="ab">Compromises financial reporting. 5-business-day resolution. Physical count + GRN reconciliation.</div></div>
     <div class="abox amb"><div class="ah"><i class="ai">P2</i><span class="at">{fmtA(K['risk_sv'],0)} Slow Mover Capital</span></div><div class="ab">Tiered markdown: 30% at 90 days, 50% at 180 days, supplier credit at 365 days.</div></div>
-    <div class="abox blu"><div class="ah"><i class="ai">P3</i><span class="at">Zero Sale Dead Stock &mdash; {fmtA(K['zero_sv'],0)}</span></div><div class="ab">{fmtN(K['zero_count'],0)} items — supplier return, clearance, or write-off within 30 days.</div></div>
-    <div class="abox grn"><div class="ah"><i class="ai">&#10003;</i><span class="at">Food &amp; Essentials Strength</span></div><div class="ab">Grocery, Fresh Produce, and Beverages drive footfall. Zero OOS tolerance on these lines.</div></div>
+    <div class="abox blu"><div class="ah"><i class="ai">P3</i><span class="at">Zero Sale Dead Stock — {fmtA(K['zero_sv'],0)}</span></div><div class="ab">{fmtN(K['zero_count'],0)} items — supplier return, clearance, or write-off within 30 days.</div></div>
+    <div class="abox grn"><div class="ah"><i class="ai">✓</i><span class="at">Food &amp; Essentials Strength</span></div><div class="ab">Grocery, Fresh Produce, and Beverages drive footfall. Zero OOS tolerance on these lines.</div></div>
   </div>
+
+  <div class="crow c21">
+    <div class="cbox">
+      <div class="chead"><span class="ctitle">Top 10 Suppliers by Sales</span><span class="cmeta">{len(top_sup)} suppliers shown</span></div>
+      <div class="rank-list" id="top-sup"></div>
+    </div>
+    <div class="cbox">
+      <div class="chead"><span class="ctitle">Stock-to-Sales Ratio</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div><div class="klbl" style="margin-bottom:3px">Stock Value / Annual Sales</div><div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#79C0FF">{(K['total_sv']/max(1,K['total_ts'])):.2f}x</div></div>
+        <div><div class="klbl" style="margin-bottom:3px">Dead Stock %</div><div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#F85149">{(K['zero_sv']/max(1,K['total_sv'])*100):.1f}%</div></div>
+        <div><div class="klbl" style="margin-bottom:3px">Active SKU %</div><div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#3FB950">{((K['in_stock']-K['zero_count'])/max(1,K['total_items'])*100):.1f}%</div></div>
+        <div><div class="klbl" style="margin-bottom:3px">Recovery Target (30d)</div><div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:#D29922">AED {fmtN((K['zero_sv']+K['uw_sv'])*0.4,0)}</div></div>
+      </div>
+    </div>
+  </div>
+
   <div class="tcard"><div class="thd"><span class="ttitle">Prioritised Action Plan</span><span class="b-brand">Management Decision Matrix</span></div>
   <div class="tsc"><table><thead><tr><th>Priority</th><th>Issue</th><th>Scale</th><th>Financial Exposure</th><th>Action</th><th>Owner</th><th>Deadline</th></tr></thead>
   <tbody>{action_html}</tbody></table></div></div>
+
   <div class="arow" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
-    <div class="abox grn"><div class="ah"><i class="ai">&#8721;</i><span class="at">Supplier Leverage</span></div><div class="ab">Purchased-but-unsold evidence. Buy-back, credit, or exchange. Recovery: 40–60% of exposed capital.</div></div>
-    <div class="abox blu"><div class="ah"><i class="ai">&#8853;</i><span class="at">Clearance Strategy</span></div><div class="ab">Bundle dead stock with fast movers. End-cap placements. Target: 25% moved in 60 days.</div></div>
-    <div class="abox amb"><div class="ah"><i class="ai">&#9737;</i><span class="at">Governance</span></div><div class="ab">Monthly slow-mover reviews. 3 consecutive zero-sale months = mandatory review. 6 months + &lt;5 units = flag.</div></div>
+    <div class="abox grn"><div class="ah"><i class="ai">∑</i><span class="at">Supplier Leverage</span></div><div class="ab">Purchased-but-unsold evidence. Buy-back, credit, or exchange. Recovery: 40–60% of exposed capital.</div></div>
+    <div class="abox blu"><div class="ah"><i class="ai">⊕</i><span class="at">Clearance Strategy</span></div><div class="ab">Bundle dead stock with fast movers. End-cap placements. Target: 25% moved in 60 days.</div></div>
+    <div class="abox amb"><div class="ah"><i class="ai">☉</i><span class="at">Governance</span></div><div class="ab">Monthly slow-mover reviews. 3 consecutive zero-sale months = mandatory review. 6 months + &lt;5 units = flag.</div></div>
   </div>
 </div></div>
 
-<div class="footer">AL MADINA GROUP &nbsp;|&nbsp; Inventory Intelligence Report &nbsp;|&nbsp; {dlabel}</div>
+<div class="footer">AL MADINA GROUP &nbsp;|&nbsp; Inventory Intelligence Report &nbsp;|&nbsp; {dlabel} &nbsp;|&nbsp; Generated locally — no data leaves your browser</div>
+
+<script type="application/json" id="__data__">{DATA_JSON}</script>
 <script>{JS}</script>
 </body></html>"""
 
-    return html
+    return HTML_BODY
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
